@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,26 +25,31 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// PIVO Cosmic Color Palette
-val CosmicBg = Color(0xFF07040F)
-val CosmicCard = Color(0xFF130B24)
-val CosmicGlass = Color(0x332A1654)
+// Ultra-Deep Cosmic Palette
+val VoidBlack = Color(0xFF04020A)
+val DeepNebula = Color(0xFF0E061F)
+val GlassSurface = Color(0xCC160C2E)
+val GlassBorder = Color(0x44B565FF)
 val NeonPurple = Color(0xFF9D4EDD)
-val ElectricViolet = Color(0xFF7B2CBF)
-val GlowPink = Color(0xFFE056FD)
-val TextPrimary = Color(0xFFF8F7FF)
-val TextSecondary = Color(0xFFA99EC4)
+val HyperViolet = Color(0xFF6A00F4)
+val PlasmaPink = Color(0xFFFF2A85)
+val StarlightWhite = Color(0xFFF9F7FF)
+val MutedLavender = Color(0xFFA599C7)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,10 +59,10 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(
                 colorScheme = darkColorScheme(
                     primary = NeonPurple,
-                    background = CosmicBg,
-                    surface = CosmicCard,
-                    onBackground = TextPrimary,
-                    onSurface = TextPrimary
+                    background = VoidBlack,
+                    surface = GlassSurface,
+                    onBackground = StarlightWhite,
+                    onSurface = StarlightWhite
                 )
             ) {
                 PivoAppRoot()
@@ -72,7 +79,7 @@ fun PivoAppRoot() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(CosmicBg)
+            .background(VoidBlack)
     ) {
         when (currentScreen) {
             "welcome" -> CosmicWelcomeScreen(
@@ -106,7 +113,7 @@ fun PivoAppRoot() {
 }
 
 @Composable
-fun FourPointStar(modifier: Modifier = Modifier, color: Color = GlowPink) {
+fun FourPointStar(modifier: Modifier = Modifier, color: Color = Color.White) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
@@ -127,45 +134,113 @@ fun CosmicWelcomeScreen(
     onCreateAccountClick: () -> Unit,
     onLoginClick: () -> Unit
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "cosmic_pulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF1A0836),
-                        CosmicBg,
-                        Color(0xFF120626),
-                        CosmicBg
+                        Color(0xFF210747),
+                        VoidBlack,
+                        Color(0xFF170533),
+                        VoidBlack
                     )
                 )
             )
     ) {
+        // Multi-layered Nebula Glow + 3D Cosmic Globe Horizon
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val center = Offset(size.width / 2f, size.height * 0.44f)
+            val w = size.width
+            val h = size.height
+            val globeCenter = Offset(w / 2f, h * 0.45f)
+            val globeRadius = w * 0.36f
+
+            // Outer Cosmic Aura
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0x669D4EDD),
-                        Color(0x227B2CBF),
+                        PlasmaPink.copy(alpha = 0.28f * pulseAlpha),
+                        NeonPurple.copy(alpha = 0.35f),
+                        HyperViolet.copy(alpha = 0.12f),
                         Color.Transparent
                     ),
-                    center = center,
-                    radius = size.width * 0.72f
+                    center = globeCenter,
+                    radius = w * 0.85f
                 ),
-                center = center,
-                radius = size.width * 0.72f
+                center = globeCenter,
+                radius = w * 0.85f
             )
-            val stars = listOf(
-                Offset(size.width * 0.18f, size.height * 0.14f),
-                Offset(size.width * 0.82f, size.height * 0.18f),
-                Offset(size.width * 0.12f, size.height * 0.34f),
-                Offset(size.width * 0.88f, size.height * 0.38f),
-                Offset(size.width * 0.25f, size.height * 0.52f),
-                Offset(size.width * 0.76f, size.height * 0.50f)
+
+            // Dark Planet Core
+            drawCircle(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF3A0CA3),
+                        Color(0xFF10002B),
+                        VoidBlack
+                    ),
+                    startY = globeCenter.y - globeRadius,
+                    endY = globeCenter.y + globeRadius
+                ),
+                center = globeCenter,
+                radius = globeRadius
             )
-            stars.forEach { pos ->
-                drawCircle(color = Color.White.copy(alpha = 0.75f), radius = 3.5f, center = pos)
+
+            // Glowing Rim Light on Top of Globe
+            drawArc(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, PlasmaPink, Color.White, PlasmaPink, Color.Transparent)
+                ),
+                startAngle = 195f,
+                sweepAngle = 150f,
+                useCenter = false,
+                topLeft = Offset(globeCenter.x - globeRadius, globeCenter.y - globeRadius),
+                size = Size(globeRadius * 2, globeRadius * 2),
+                style = Stroke(width = 5f)
+            )
+
+            // 3D Latitude & Longitude Grid Lines inside Globe
+            for (i in -2..2) {
+                val factor = i * 0.32f
+                drawOval(
+                    color = NeonPurple.copy(alpha = 0.32f),
+                    topLeft = Offset(globeCenter.x - globeRadius * (1f - kotlin.math.abs(factor) * 0.6f), globeCenter.y - globeRadius),
+                    size = Size(globeRadius * 2 * (1f - kotlin.math.abs(factor) * 0.6f), globeRadius * 2),
+                    style = Stroke(width = 1.5f)
+                )
+                drawOval(
+                    color = PlasmaPink.copy(alpha = 0.22f),
+                    topLeft = Offset(globeCenter.x - globeRadius, globeCenter.y - globeRadius * (0.25f + kotlin.math.abs(factor) * 0.45f)),
+                    size = Size(globeRadius * 2, globeRadius * 2 * (0.25f + kotlin.math.abs(factor) * 0.45f)),
+                    style = Stroke(width = 1.5f)
+                )
+            }
+
+            // Starfield
+            val starCoords = listOf(
+                Triple(0.14f, 0.11f, 3.5f), Triple(0.84f, 0.13f, 4f),
+                Triple(0.24f, 0.22f, 2.5f), Triple(0.75f, 0.24f, 3f),
+                Triple(0.10f, 0.36f, 3f),   Triple(0.90f, 0.35f, 3.5f),
+                Triple(0.18f, 0.56f, 2.5f), Triple(0.83f, 0.54f, 3f),
+                Triple(0.50f, 0.08f, 3f),   Triple(0.35f, 0.16f, 2f)
+            )
+            starCoords.forEach { (sx, sy, r) ->
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.85f),
+                    radius = r,
+                    center = Offset(w * sx, h * sy)
+                )
             }
         }
 
@@ -174,111 +249,89 @@ fun CosmicWelcomeScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 28.dp),
+                .padding(horizontal = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // Top Glowing Emblem & Brand Title
             Column(
-                modifier = Modifier.padding(top = 42.dp),
+                modifier = Modifier.padding(top = 34.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(20.dp))
+                        .size(66.dp)
+                        .shadow(24.dp, RoundedCornerShape(22.dp), ambientColor = PlasmaPink, spotColor = NeonPurple)
+                        .clip(RoundedCornerShape(22.dp))
                         .background(
-                            Brush.linearGradient(listOf(NeonPurple, ElectricViolet))
+                            Brush.linearGradient(listOf(PlasmaPink, NeonPurple, HyperViolet))
                         )
-                        .border(1.dp, GlowPink.copy(alpha = 0.6f), RoundedCornerShape(20.dp)),
+                        .border(1.5.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(22.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     FourPointStar(modifier = Modifier.size(34.dp), color = Color.White)
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "P I V O",
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = TextPrimary,
-                    letterSpacing = 6.sp
+                    text = "PIVO",
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Black,
+                    color = StarlightWhite,
+                    letterSpacing = 8.sp
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
                     text = "YOUR WORLD. YOUR PEOPLE.",
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GlowPink,
-                    letterSpacing = 2.5.sp
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFE0AAFF),
+                    letterSpacing = 3.sp
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .size(210.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                GlowPink.copy(alpha = 0.45f),
-                                NeonPurple.copy(alpha = 0.28f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-                    .border(1.dp, NeonPurple.copy(alpha = 0.35f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Public,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.size(74.dp)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "✦ Cosmic Network",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                }
-            }
+            // Spacer allowing the 3D Globe Horizon in center to shine
+            Spacer(modifier = Modifier.height(180.dp))
 
+            // Bottom Glass Panel + Hero Text + Glowing CTA Buttons
             Column(
-                modifier = Modifier.padding(bottom = 24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = "More than social.\nIt's your world.",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = StarlightWhite,
                     textAlign = TextAlign.Center,
-                    lineHeight = 33.sp
+                    lineHeight = 35.sp
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = "Connect with friends, share your moments and discover people around your world.",
-                    fontSize = 13.sp,
-                    color = TextSecondary,
+                    fontSize = 13.5.sp,
+                    color = MutedLavender,
                     textAlign = TextAlign.Center,
-                    lineHeight = 19.sp
+                    lineHeight = 20.sp
                 )
 
                 Spacer(modifier = Modifier.height(26.dp))
 
+                // Glowing Gradient Primary CTA
                 Button(
                     onClick = onCreateAccountClick,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp),
-                    shape = RoundedCornerShape(16.dp),
+                        .height(56.dp)
+                        .shadow(20.dp, RoundedCornerShape(18.dp), spotColor = PlasmaPink),
+                    shape = RoundedCornerShape(18.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                     contentPadding = PaddingValues()
                 ) {
@@ -286,50 +339,54 @@ fun CosmicWelcomeScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(
-                                Brush.horizontalGradient(listOf(NeonPurple, GlowPink))
-                            ),
+                                Brush.horizontalGradient(listOf(HyperViolet, NeonPurple, PlasmaPink))
+                            )
+                            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(18.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "✦  Create your account",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FourPointStar(modifier = Modifier.size(16.dp), color = Color.White)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Create your account",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Frosted Glass Log In Button
                 OutlinedButton(
                     onClick = onLoginClick,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        NeonPurple.copy(alpha = 0.7f)
-                    ),
+                        .height(54.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, GlassBorder),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = CosmicGlass
+                        containerColor = GlassSurface
                     )
                 ) {
                     Text(
                         text = "Log in",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary
+                        color = StarlightWhite
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
                     text = "MADE IN INDIA 🇮🇳",
                     fontSize = 11.sp,
-                    color = TextSecondary,
-                    letterSpacing = 2.sp
+                    fontWeight = FontWeight.SemiBold,
+                    color = MutedLavender,
+                    letterSpacing = 2.5.sp
                 )
             }
         }
@@ -347,102 +404,128 @@ fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(CosmicBg)
-            .statusBarsPadding()
-            .padding(24.dp)
+            .background(
+                Brush.verticalGradient(listOf(DeepNebula, VoidBlack))
+            )
     ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = TextPrimary
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = if (isSignup) "Join PIVO ✦" else "Welcome back ✦",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextPrimary
-        )
-
-        Text(
-            text = if (isSignup) "Apna cosmic profile banao aur duniya se judo."
-            else "Apne PIVO world mein wapas swagat hai.",
-            fontSize = 14.sp,
-            color = TextSecondary,
-            modifier = Modifier.padding(top = 6.dp)
-        )
-
-        Spacer(modifier = Modifier.height(28.dp))
-
-        if (isSignup) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Full Name / Username") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp)
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email Address") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        )
-
-        Spacer(modifier = Modifier.height(26.dp))
-
-        Button(
-            onClick = { onSuccess(name.ifBlank { "Rahul" }) },
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = NeonPurple)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(24.dp)
         ) {
-            Text(
-                text = if (isSignup) "Create Account 🚀" else "Log In ✦",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-        }
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(GlassSurface)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = StarlightWhite)
+            }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-        TextButton(
-            onClick = onSwitchMode,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        ) {
             Text(
-                text = if (isSignup) "Already have an account? Log in"
-                else "New to PIVO? Create an account",
-                color = GlowPink
+                text = if (isSignup) "Join PIVO ✦" else "Welcome back ✦",
+                fontSize = 30.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = StarlightWhite
             )
+
+            Text(
+                text = if (isSignup) "Apna cosmic account banao aur duniya se judo."
+                else "Apne PIVO world mein wapas swagat hai.",
+                fontSize = 14.sp,
+                color = MutedLavender,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(GlassSurface)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
+                    .padding(20.dp)
+            ) {
+                if (isSignup) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Full Name / Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email Address") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { onSuccess(name.ifBlank { "Rahul" }) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    contentPadding = PaddingValues()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Brush.horizontalGradient(listOf(HyperViolet, PlasmaPink))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (isSignup) "Create Account 🚀" else "Log In ✦",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            TextButton(
+                onClick = onSwitchMode,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            ) {
+                Text(
+                    text = if (isSignup) "Already have an account? Log in"
+                    else "New to PIVO? Create an account",
+                    color = Color(0xFFE0AAFF),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
@@ -450,12 +533,13 @@ fun AuthScreen(
 data class PivoPost(
     val id: Int,
     val author: String,
-    val handle: String,
+    val location: String,
     val time: String,
     val caption: String,
     val likes: Int,
     val comments: Int,
-    val gradientColors: List<Color>
+    val isVerified: Boolean,
+    val cardGradient: List<Color>
 )
 
 data class PivoChat(
@@ -463,79 +547,142 @@ data class PivoChat(
     val lastMsg: String,
     val time: String,
     val unread: Int,
+    val isOnline: Boolean = true,
     val isTyping: Boolean = false
 )
 
 @Composable
 fun MainDashboardScreen(userName: String, onLogout: () -> Unit) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+
+    val posts = remember {
+        mutableStateListOf(
+            PivoPost(
+                1, "rahul_arya", "Agra • Sunset Point", "2h ago",
+                "Chasing purple horizons after midnight coding ✨💜 #PIVO #CosmicVibes",
+                2480, 142, true,
+                listOf(Color(0xFF3C096C), Color(0xFF9D4EDD), Color(0xFFFF2A85))
+            ),
+            PivoPost(
+                2, "pivo_creators", "New Delhi, India 🇮🇳", "5h ago",
+                "India's own next-gen social platform is officially taking shape! 🚀",
+                5390, 410, true,
+                listOf(Color(0xFF10002B), Color(0xFF5A189A), Color(0xFFE056FD))
+            )
+        )
+    }
+
+    if (showCreateDialog) {
+        var newCaption by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            containerColor = DeepNebula,
+            title = { Text("Create Cosmic Post ✦", color = StarlightWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newCaption,
+                    onValueChange = { newCaption = it },
+                    placeholder = { Text("Share your moment with PIVO...") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newCaption.isNotBlank()) {
+                            posts.add(
+                                0,
+                                PivoPost(
+                                    posts.size + 1,
+                                    userName.lowercase(),
+                                    "India 🇮🇳",
+                                    "Just now",
+                                    newCaption,
+                                    1,
+                                    0,
+                                    true,
+                                    listOf(Color(0xFF6A00F4), Color(0xFFFF2A85), Color(0xFF1A0836))
+                                )
+                            )
+                        }
+                        showCreateDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonPurple)
+                ) {
+                    Text("Post 🚀", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateDialog = false }) {
+                    Text("Cancel", color = MutedLavender)
+                }
+            }
+        )
+    }
 
     Scaffold(
-        containerColor = CosmicBg,
+        containerColor = VoidBlack,
         bottomBar = {
-            NavigationBar(
-                containerColor = Color(0xFF0E081C),
-                contentColor = TextPrimary
+            // Sleek Cosmic Bottom Bar with Center '+' Button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .background(Color(0xEE0B0518))
+                    .border(BorderStroke(0.5.dp, GlassBorder))
+                    .padding(vertical = 10.dp, horizontal = 18.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Feed") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Search, contentDescription = "Explore") },
-                    label = { Text("Explore") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.ChatBubbleOutline, contentDescription = "Chats") },
-                    label = { Text("Chats") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
-                    label = { Text("Profile") }
-                )
+                BottomNavIcon(Icons.Default.Home, selectedTab == 0) { selectedTab = 0 }
+                BottomNavIcon(Icons.Default.Search, selectedTab == 1) { selectedTab = 1 }
+
+                // Center Glowing Create Button (+)
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .shadow(14.dp, CircleShape, spotColor = PlasmaPink)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(NeonPurple, PlasmaPink)))
+                        .clickable { showCreateDialog = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Create", tint = Color.White, modifier = Modifier.size(26.dp))
+                }
+
+                BottomNavIcon(Icons.Default.ChatBubbleOutline, selectedTab == 2) { selectedTab = 2 }
+                BottomNavIcon(Icons.Default.Person, selectedTab == 3) { selectedTab = 3 }
             }
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when (selectedTab) {
-                0 -> FeedTabScreen()
+                0 -> FeedTabScreen(posts = posts)
                 1 -> ExploreTabScreen()
                 2 -> ChatsTabScreen()
-                3 -> ProfileTabScreen(userName = userName, onLogout = onLogout)
+                3 -> ProfileTabScreen(userName = userName, postCount = posts.size, onLogout = onLogout)
             }
         }
     }
 }
 
 @Composable
-fun FeedTabScreen() {
-    var selectedFilter by remember { mutableStateOf("For You") }
-    val filters = listOf("For You", "Following", "Nearby")
-
-    val posts = remember {
-        listOf(
-            PivoPost(
-                1, "rahul_arya", "@rahul_arya", "2h ago",
-                "Late night sunset vibes over the city skyline ✨💜 #PIVO #Cosmic",
-                2400, 128,
-                listOf(Color(0xFF5A189A), Color(0xFFE056FD), Color(0xFF240046))
-            ),
-            PivoPost(
-                2, "pivo_creators", "@pivo_creators", "5h ago",
-                "India's own next-gen social space is officially taking shape! 🚀🇮🇳",
-                5120, 340,
-                listOf(Color(0xFF3C096C), Color(0xFF9D4EDD), Color(0xFF10002B))
-            )
+fun BottomNavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (selected) PlasmaPink else MutedLavender,
+            modifier = Modifier.size(26.dp)
         )
     }
+}
+
+@Composable
+fun FeedTabScreen(posts: List<PivoPost>) {
+    var selectedFilter by remember { mutableStateOf("For You") }
+    val filters = listOf("For You", "Following", "Nearby")
 
     LazyColumn(
         modifier = Modifier
@@ -551,42 +698,54 @@ fun FeedTabScreen() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    FourPointStar(modifier = Modifier.size(22.dp), color = GlowPink)
+                    FourPointStar(modifier = Modifier.size(22.dp), color = PlasmaPink)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "PIVO",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = TextPrimary,
-                        letterSpacing = 3.sp
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Black,
+                        color = StarlightWhite,
+                        letterSpacing = 4.sp
                     )
                 }
-                Icon(Icons.Default.NotificationsNone, contentDescription = null, tint = TextPrimary)
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(GlassSurface),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.NotificationsNone, contentDescription = null, tint = StarlightWhite)
+                }
             }
 
+            // Filter Pills
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 14.dp),
+                    .padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 filters.forEach { tab ->
                     val active = selectedFilter == tab
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (active) NeonPurple else CosmicCard)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(
+                                if (active) Brush.horizontalGradient(listOf(HyperViolet, PlasmaPink))
+                                else Brush.horizontalGradient(listOf(GlassSurface, GlassSurface))
+                            )
                             .border(
                                 1.dp,
-                                if (active) GlowPink else NeonPurple.copy(alpha = 0.25f),
-                                RoundedCornerShape(20.dp)
+                                if (active) Color.White.copy(alpha = 0.4f) else GlassBorder,
+                                RoundedCornerShape(22.dp)
                             )
                             .clickable { selectedFilter = tab }
-                            .padding(horizontal = 18.dp, vertical = 8.dp)
+                            .padding(horizontal = 18.dp, vertical = 9.dp)
                     ) {
                         Text(
                             text = tab,
-                            color = if (active) Color.White else TextSecondary,
+                            color = if (active) Color.White else MutedLavender,
                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 13.sp
                         )
@@ -595,60 +754,98 @@ fun FeedTabScreen() {
             }
         }
 
-        items(posts) { post ->
+        items(posts, key = { it.id }) { post ->
             var liked by remember { mutableStateOf(false) }
             var saved by remember { mutableStateOf(false) }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 18.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(CosmicCard)
-                    .border(1.dp, NeonPurple.copy(alpha = 0.25f), RoundedCornerShape(22.dp))
+                    .padding(bottom = 20.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(GlassSurface)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
                     .padding(14.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(NeonPurple, GlowPink))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = post.author.first().uppercase(),
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(NeonPurple, PlasmaPink))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = post.author.first().uppercase(),
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(post.author, fontWeight = FontWeight.Bold, color = StarlightWhite, fontSize = 14.5.sp)
+                                if (post.isVerified) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Verified, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(15.dp))
+                                }
+                            }
+                            Text("${post.location} • ${post.time}", color = MutedLavender, fontSize = 11.sp)
+                        }
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(post.author, fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
-                        Text(post.time, color = TextSecondary, fontSize = 11.sp)
-                    }
+                    Icon(Icons.Default.MoreVert, contentDescription = null, tint = MutedLavender)
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Scenic Cosmic Card
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(210.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Brush.linearGradient(post.gradientColors)),
-                    contentAlignment = Alignment.BottomStart
+                        .height(235.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.linearGradient(post.cardGradient))
+                        .clickable { liked = !liked }
                 ) {
-                    Text(
-                        text = post.caption,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    // Decorative Moon / Glow Orb inside card
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(Color.White.copy(alpha = 0.35f), Color.Transparent),
+                                center = Offset(size.width * 0.78f, size.height * 0.25f),
+                                radius = 140f
+                            ),
+                            center = Offset(size.width * 0.78f, size.height * 0.25f),
+                            radius = 140f
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                                )
+                            )
+                            .padding(16.dp),
+                        contentAlignment = Alignment.BottomStart
+                    ) {
+                        Text(
+                            text = post.caption,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.5.sp,
+                            lineHeight = 20.sp
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -660,27 +857,23 @@ fun FeedTabScreen() {
                             Icon(
                                 imageVector = if (liked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                                 contentDescription = "Like",
-                                tint = if (liked) GlowPink else TextPrimary
+                                tint = if (liked) PlasmaPink else StarlightWhite
                             )
                         }
-                        Text(
-                            text = "${post.likes + if (liked) 1 else 0}",
-                            color = TextPrimary,
-                            fontSize = 13.sp
-                        )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Comment", tint = TextPrimary)
+                        Text("${post.likes + if (liked) 1 else 0}", color = StarlightWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Comment", tint = StarlightWhite)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("${post.comments}", color = TextPrimary, fontSize = 13.sp)
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Share", tint = TextPrimary)
+                        Text("${post.comments}", color = StarlightWhite, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Share", tint = StarlightWhite)
                     }
 
                     IconButton(onClick = { saved = !saved }) {
                         Icon(
                             imageVector = if (saved) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder,
                             contentDescription = "Save",
-                            tint = if (saved) GlowPink else TextPrimary
+                            tint = if (saved) PlasmaPink else StarlightWhite
                         )
                     }
                 }
@@ -691,34 +884,44 @@ fun FeedTabScreen() {
 
 @Composable
 fun ExploreTabScreen() {
+    var query by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Text("Explore World ✦", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        Text("Explore World ✦", fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, color = StarlightWhite)
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedTextField(
-            value = "",
-            onValueChange = {},
+            value = query,
+            onValueChange = { query = it },
             placeholder = { Text("Search people, nearby vibes, reels...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = PlasmaPink) },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp)
         )
-        Spacer(modifier = Modifier.height(20.dp))
-        Text("Trending in India 🇮🇳", fontWeight = FontWeight.SemiBold, color = GlowPink)
+        Spacer(modifier = Modifier.height(22.dp))
+        Text("Trending Across India 🇮🇳", fontWeight = FontWeight.Bold, color = Color(0xFFE0AAFF))
         Spacer(modifier = Modifier.height(10.dp))
-        listOf("#PIVOLaunch", "#BuildInPublic", "#MadeInIndia", "#CosmicVibes").forEach { tag ->
-            Box(
+        listOf(
+            "#PIVOLaunch" to "14.2K moments",
+            "#BuildInPublic" to "8.9K builders",
+            "#MadeInIndia" to "32.1K creators",
+            "#CosmicNights" to "5.4K reels"
+        ).forEach { (tag, count) ->
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CosmicCard)
-                    .padding(16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(GlassSurface)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(tag, color = TextPrimary, fontWeight = FontWeight.Bold)
+                Text(tag, color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(count, color = MutedLavender, fontSize = 12.sp)
             }
         }
     }
@@ -726,14 +929,78 @@ fun ExploreTabScreen() {
 
 @Composable
 fun ChatsTabScreen() {
+    var activeChatUser by remember { mutableStateOf<String?>(null) }
     val stories = listOf("Your story", "Aditi", "Kunal", "Neha", "Aarav")
     val chats = listOf(
-        PivoChat("Aditi Sharma", "Hey! Kaise ho? 🔥", "2m", 2),
-        PivoChat("Kunal Verma", "Sketch bhej do bro", "10m", 0),
-        PivoChat("Pivo Team", "Welcome to PIVO ✦", "30m", 1),
-        PivoChat("Neha Singh", "Typing...", "now", 0, isTyping = true),
-        PivoChat("Creators Hub", "New update is live! 🚀", "1h", 3)
+        PivoChat("Aditi Sharma", "Hey! Kaise ho? 🔥", "2m", 2, isOnline = true),
+        PivoChat("Kunal Verma", "Sketch bhej do bro", "10m", 0, isOnline = true),
+        PivoChat("Pivo Team", "Welcome to PIVO ✦", "30m", 1, isOnline = true),
+        PivoChat("Neha Singh", "Typing...", "now", 0, isOnline = true, isTyping = true),
+        PivoChat("Creators Hub", "New update is live! 🚀", "1h", 3, isOnline = false)
     )
+
+    if (activeChatUser != null) {
+        val messages = remember {
+            mutableStateListOf(
+                "Hey! Welcome to PIVO Cosmic Chat ✨",
+                "Bhai UI ekdum next-level lag raha hai! 🔥"
+            )
+        }
+        var draft by remember { mutableStateOf("") }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { activeChatUser = null }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = StarlightWhite)
+                }
+                Text(activeChatUser!!, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = StarlightWhite)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(messages) { msg ->
+                    Box(
+                        modifier = Modifier
+                            .padding(vertical = 6.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(GlassSurface)
+                            .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
+                            .padding(14.dp)
+                    ) {
+                        Text(msg, color = StarlightWhite)
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    placeholder = { Text("Message ${activeChatUser}...") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                IconButton(
+                    onClick = {
+                        if (draft.isNotBlank()) {
+                            messages.add(draft)
+                            draft = ""
+                        }
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(PlasmaPink)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
+                }
+            }
+        }
+        return
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -744,8 +1011,8 @@ fun ChatsTabScreen() {
             Text(
                 text = "Chats",
                 fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
+                fontWeight = FontWeight.ExtraBold,
+                color = StarlightWhite,
                 modifier = Modifier.padding(vertical = 14.dp)
             )
 
@@ -757,21 +1024,25 @@ fun ChatsTabScreen() {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
-                                .size(60.dp)
+                                .size(62.dp)
                                 .clip(CircleShape)
-                                .background(CosmicCard)
-                                .border(2.dp, GlowPink, CircleShape),
+                                .background(GlassSurface)
+                                .border(
+                                    2.dp,
+                                    Brush.linearGradient(listOf(NeonPurple, PlasmaPink)),
+                                    CircleShape
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = if (person == "Your story") "+" else person.first().toString(),
-                                color = TextPrimary,
+                                color = StarlightWhite,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 20.sp
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(person, color = TextSecondary, fontSize = 11.sp)
+                        Text(person, color = MutedLavender, fontSize = 11.sp)
                     }
                 }
             }
@@ -781,42 +1052,57 @@ fun ChatsTabScreen() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(CosmicCard)
+                    .padding(vertical = 6.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(GlassSurface)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(18.dp))
+                    .clickable { activeChatUser = chat.name }
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(NeonPurple, ElectricViolet))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(chat.name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold)
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(listOf(HyperViolet, NeonPurple))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(chat.name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                        if (chat.isOnline) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .align(Alignment.BottomEnd)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF22C55E))
+                                    .border(2.dp, VoidBlack, CircleShape)
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(chat.name, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(chat.name, color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         Text(
                             text = chat.lastMsg,
-                            color = if (chat.isTyping) GlowPink else TextSecondary,
-                            fontSize = 13.sp
+                            color = if (chat.isTyping) PlasmaPink else MutedLavender,
+                            fontSize = 13.sp,
+                            fontWeight = if (chat.isTyping) FontWeight.SemiBold else FontWeight.Normal
                         )
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(chat.time, color = TextSecondary, fontSize = 11.sp)
+                    Text(chat.time, color = MutedLavender, fontSize = 11.sp)
                     if (chat.unread > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(5.dp))
                         Box(
                             modifier = Modifier
-                                .size(20.dp)
+                                .size(22.dp)
                                 .clip(CircleShape)
-                                .background(GlowPink),
+                                .background(PlasmaPink),
                             contentAlignment = Alignment.Center
                         ) {
                             Text("${chat.unread}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -829,47 +1115,54 @@ fun ChatsTabScreen() {
 }
 
 @Composable
-fun ProfileTabScreen(userName: String, onLogout: () -> Unit) {
+fun ProfileTabScreen(userName: String, postCount: Int, onLogout: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Box(
             modifier = Modifier
-                .size(92.dp)
+                .size(96.dp)
+                .shadow(20.dp, CircleShape, spotColor = PlasmaPink)
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(NeonPurple, GlowPink))),
+                .background(Brush.linearGradient(listOf(HyperViolet, NeonPurple, PlasmaPink)))
+                .border(2.dp, Color.White.copy(alpha = 0.5f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(userName.first().uppercase(), fontSize = 36.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(userName.first().uppercase(), fontSize = 38.sp, fontWeight = FontWeight.Black, color = Color.White)
         }
         Spacer(modifier = Modifier.height(14.dp))
-        Text(userName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-        Text("@${userName.lowercase()}_pivo • Creator ✦", color = GlowPink, fontSize = 13.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(userName, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = StarlightWhite)
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(Icons.Default.Verified, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(20.dp))
+        }
+        Text("@${userName.lowercase()}_pivo • Founder ✦", color = Color(0xFFE0AAFF), fontSize = 13.sp)
         Spacer(modifier = Modifier.height(24.dp))
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(CosmicCard)
+                .clip(RoundedCornerShape(20.dp))
+                .background(GlassSurface)
+                .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
                 .padding(18.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("12", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
-                Text("Posts", color = TextSecondary, fontSize = 12.sp)
+                Text("$postCount", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = StarlightWhite)
+                Text("Posts", color = MutedLavender, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("1.4K", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
-                Text("Followers", color = TextSecondary, fontSize = 12.sp)
+                Text("1.4K", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = StarlightWhite)
+                Text("Followers", color = MutedLavender, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("180", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
-                Text("Following", color = TextSecondary, fontSize = 12.sp)
+                Text("180", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = StarlightWhite)
+                Text("Following", color = MutedLavender, fontSize = 12.sp)
             }
         }
 
@@ -877,10 +1170,13 @@ fun ProfileTabScreen(userName: String, onLogout: () -> Unit) {
 
         OutlinedButton(
             onClick = onLogout,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, PlasmaPink.copy(alpha = 0.6f))
         ) {
-            Text("Log Out", color = GlowPink, fontWeight = FontWeight.Bold)
+            Text("Log Out", color = PlasmaPink, fontWeight = FontWeight.Bold)
         }
     }
 }
