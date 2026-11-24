@@ -1,7 +1,10 @@
 package com.pivo.app
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.WebSettings
@@ -9,8 +12,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -43,12 +48,12 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -57,11 +62,27 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
+
+// TODO: अपना फ्री Cloudinary Cloud Name और Unsigned Upload Preset यहाँ डालें
+const val CLOUDINARY_CLOUD_NAME = "YOUR_CLOUD_NAME"
+const val CLOUDINARY_UPLOAD_PRESET = "YOUR_UNSIGNED_PRESET"
 
 val VoidBlack = Color(0xFF04020A)
 val DeepNebula = Color(0xFF0F0722)
@@ -77,17 +98,19 @@ val StarlightWhite = Color(0xFFF9F7FF)
 val MutedLavender = Color(0xFFA599C7)
 
 data class UserProfileData(
-    val name: String,
-    val username: String,
+    val uid: String = "",
+    val name: String = "PIVO Creator",
+    val username: String = "pivo.user",
+    val photoUrl: String = "",
     val pronouns: String = "",
-    val bio: String,
+    val bio: String = "Your people, your moments. • Made in India 🇮🇳",
     val website: String = "andexmml-gif.github.io/Pivo-web/",
-    val category: String = "Software Company",
+    val category: String = "Creator",
     val gender: String = "Prefer not to say",
     val isAiProfile: Boolean = false,
     val isVerified: Boolean = true,
     val isPrivate: Boolean = false,
-    val snapScore: Int = 14820
+    val snapScore: Int = 100
 )
 
 data class PivoStory(
@@ -175,6 +198,97 @@ fun extractInstagramEmbedUrl(rawUrl: String): String? {
     return if (match != null) {
         "https://www.instagram.com/${match.groupValues[2]}/${match.groupValues[3]}/embed/"
     } else null
+}
+
+// DP को 150KB के अंदर कंप्रेस करके Cloudinary पर अपलोड करने का फ़ंक्शन
+suspend fun uploadDpToCloudinary(context: Context, imageUri: Uri): String? = withContext(Dispatchers.IO) {
+    try {
+        if (CLOUDINARY_CLOUD_NAME == "YOUR_CLOUD_NAME" || CLOUDINARY_UPLOAD_PRESET == "YOUR_UNSIGNED_PRESET") {
+            return@withContext imageUri.toString()
+        }
+        val inputStream = context.contentResolver.openInputStream(imageUri) ?: return@withContext null
+        val originalBitmap = BitmapFactory.decodeStream(inputStream)
+        inputStream.close()
+
+        val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, 512, 512, true)
+        val baos = ByteArrayOutputStream()
+        scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+        val imageBytes = baos.toByteArray()
+
+        val boundary = "----PivoBoundary${System.currentTimeMillis()}"
+        val url = URL("https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        }
+
+        DataOutputStream(conn.outputStream).use { out ->
+            out.writeBytes("--$boundary\r\n")
+            out.writeBytes("Content-Disposition: form-data; name=\"upload_preset\"\r\n\r\n")
+            out.writeBytes("$CLOUDINARY_UPLOAD_PRESET\r\n")
+
+            out.writeBytes("--$boundary\r\n")
+            out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"pivo_dp.jpg\"\r\n")
+            out.writeBytes("Content-Type: image/jpeg\r\n\r\n")
+            out.write(imageBytes)
+            out.writeBytes("\r\n--$boundary--\r\n")
+        }
+
+        if (conn.responseCode in 200..299) {
+            val resp = conn.inputStream.bufferedReader().readText()
+            JSONObject(resp).optString("secure_url").takeIf { it.isNotBlank() }
+        } else null
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+fun saveUserProfileToFirestore(profile: UserProfileData) {
+    if (profile.uid.isBlank()) return
+    val data = hashMapOf(
+        "uid" to profile.uid,
+        "name" to profile.name,
+        "username" to profile.username,
+        "photoUrl" to profile.photoUrl,
+        "pronouns" to profile.pronouns,
+        "bio" to profile.bio,
+        "website" to profile.website,
+        "category" to profile.category,
+        "gender" to profile.gender,
+        "isAiProfile" to profile.isAiProfile,
+        "isVerified" to profile.isVerified,
+        "isPrivate" to profile.isPrivate,
+        "snapScore" to profile.snapScore
+    )
+    FirebaseFirestore.getInstance()
+        .collection("users")
+        .document(profile.uid)
+        .set(data, SetOptions.merge())
+}
+
+@Composable
+fun UserAvatarView(
+    photoUrl: String,
+    fallbackText: String,
+    fontSizeSp: Int = 20
+) {
+    if (photoUrl.isNotBlank()) {
+        AsyncImage(
+            model = photoUrl,
+            contentDescription = "Profile Photo",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().clip(CircleShape)
+        )
+    } else {
+        Text(
+            text = fallbackText.firstOrNull()?.uppercase() ?: "P",
+            fontSize = fontSizeSp.sp,
+            fontWeight = FontWeight.Black,
+            color = Color.White
+        )
+    }
 }
 
 @Composable
@@ -289,29 +403,76 @@ fun RotatingNeonRingBox(sizeDp: Int, borderWidth: Float = 2.5f, isLive: Boolean 
 
 @Composable
 fun PivoAppRoot(incomingSharedLink: String? = null) {
-    var currentScreen by remember { mutableStateOf(if (incomingSharedLink != null) "main" else "welcome") }
+    val auth = remember { FirebaseAuth.getInstance() }
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    // ऐप खुलते ही FirebaseAuth से चेक करेगा कि यूज़र पहले से लॉगिन है या नहीं!
+    var firebaseUser by remember { mutableStateOf(auth.currentUser) }
+    var currentScreen by remember {
+        mutableStateOf(
+            if (auth.currentUser != null || incomingSharedLink != null) "main" else "welcome"
+        )
+    }
 
     val accounts = remember {
         mutableStateListOf(
             UserProfileData(
-                name = "pivo™",
-                username = "pivo.app",
-                bio = "Your people, your moments.\nfollow @pivo.devlopers • Made in India 🇮🇳",
-                category = "Software Company",
+                uid = auth.currentUser?.uid ?: "",
+                name = auth.currentUser?.displayName ?: "PIVO User",
+                username = auth.currentUser?.email?.substringBefore("@") ?: "pivo.app",
+                bio = "Your people, your moments.\nMade in India 🇮🇳",
+                category = "Creator",
                 isVerified = true,
-                snapScore = 24950
-            ),
-            UserProfileData(
-                name = "Rahul Arya",
-                username = "rahul.arya.fzd",
-                bio = "Founder @pivo.app 🚀 | Building in Public",
-                category = "Entrepreneur",
-                isVerified = true,
-                snapScore = 18420
+                snapScore = 100
             )
         )
     }
     var activeAccountIndex by remember { mutableIntStateOf(0) }
+
+    // लॉगिन स्टेटस और Firestore से यूज़र की प्रोफ़ाइल + DP ऑटोमैटिक लोड करें
+    DisposableEffect(auth) {
+        val listener = FirebaseAuth.AuthStateListener { fa ->
+            val user = fa.currentUser
+            firebaseUser = user
+            if (user != null) {
+                currentScreen = "main"
+                val defaultUsername = user.email?.substringBefore("@") ?: "pivo.user"
+                val initialProfile = UserProfileData(
+                    uid = user.uid,
+                    name = user.displayName?.takeIf { it.isNotBlank() } ?: defaultUsername,
+                    username = defaultUsername
+                )
+                accounts[0] = initialProfile
+
+                db.collection("users").document(user.uid).get()
+                    .addOnSuccessListener { doc ->
+                        if (doc.exists()) {
+                            accounts[0] = UserProfileData(
+                                uid = user.uid,
+                                name = doc.getString("name") ?: initialProfile.name,
+                                username = doc.getString("username") ?: initialProfile.username,
+                                photoUrl = doc.getString("photoUrl") ?: "",
+                                pronouns = doc.getString("pronouns") ?: "",
+                                bio = doc.getString("bio") ?: initialProfile.bio,
+                                website = doc.getString("website") ?: initialProfile.website,
+                                category = doc.getString("category") ?: "Creator",
+                                gender = doc.getString("gender") ?: "Prefer not to say",
+                                isAiProfile = doc.getBoolean("isAiProfile") ?: false,
+                                isVerified = doc.getBoolean("isVerified") ?: true,
+                                isPrivate = doc.getBoolean("isPrivate") ?: false,
+                                snapScore = (doc.getLong("snapScore") ?: 100L).toInt()
+                            )
+                        } else {
+                            saveUserProfileToFirestore(initialProfile)
+                        }
+                    }
+            } else {
+                if (incomingSharedLink == null) currentScreen = "welcome"
+            }
+        }
+        auth.addAuthStateListener(listener)
+        onDispose { auth.removeAuthStateListener(listener) }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(VoidBlack)) {
         AnimatedContent(
@@ -327,8 +488,10 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
                 "signup" -> AuthScreen(
                     isSignup = true,
                     onBack = { currentScreen = "welcome" },
-                    onSuccess = { name ->
-                        if (name.isNotBlank()) accounts[activeAccountIndex] = accounts[activeAccountIndex].copy(name = name)
+                    onSuccess = { createdProfile ->
+                        accounts[0] = createdProfile
+                        activeAccountIndex = 0
+                        saveUserProfileToFirestore(createdProfile)
                         currentScreen = "main"
                     },
                     onSwitchMode = { currentScreen = "login" }
@@ -336,7 +499,11 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
                 "login" -> AuthScreen(
                     isSignup = false,
                     onBack = { currentScreen = "welcome" },
-                    onSuccess = { currentScreen = "main" },
+                    onSuccess = { loggedProfile ->
+                        accounts[0] = loggedProfile
+                        activeAccountIndex = 0
+                        currentScreen = "main"
+                    },
                     onSwitchMode = { currentScreen = "signup" }
                 )
                 "main" -> MainDashboardScreen(
@@ -345,8 +512,14 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
                     incomingSharedLink = incomingSharedLink,
                     onSwitchAccount = { activeAccountIndex = it },
                     onAddAccount = { accounts.add(it); activeAccountIndex = accounts.lastIndex },
-                    onUpdateProfile = { accounts[activeAccountIndex] = it },
-                    onLogout = { currentScreen = "welcome" }
+                    onUpdateProfile = { updated ->
+                        accounts[activeAccountIndex] = updated
+                        saveUserProfileToFirestore(updated)
+                    },
+                    onLogout = {
+                        auth.signOut()
+                        currentScreen = "welcome"
+                    }
                 )
             }
         }
@@ -427,10 +600,18 @@ fun CosmicWelcomeScreen(onCreateAccountClick: () -> Unit, onLoginClick: () -> Un
 }
 
 @Composable
-fun AuthScreen(isSignup: Boolean, onBack: () -> Unit, onSuccess: (String) -> Unit, onSwitchMode: () -> Unit) {
+fun AuthScreen(
+    isSignup: Boolean,
+    onBack: () -> Unit,
+    onSuccess: (UserProfileData) -> Unit,
+    onSwitchMode: () -> Unit
+) {
+    val context = LocalContext.current
+    val auth = remember { FirebaseAuth.getInstance() }
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(VoidBlack)) {
         LiveMovingCosmicCanvas(showHorizon = false)
@@ -448,17 +629,68 @@ fun AuthScreen(isSignup: Boolean, onBack: () -> Unit, onSuccess: (String) -> Uni
                 }
                 OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(14.dp))
-                OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password (min 6 chars)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
-                    onClick = { onSuccess(name) },
+                    enabled = !isLoading,
+                    onClick = {
+                        val cleanEmail = email.trim()
+                        val cleanPass = password.trim()
+                        if (cleanEmail.isBlank() || cleanPass.length < 6) {
+                            Toast.makeText(context, "Valid email aur 6+ character password dalein", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        isLoading = true
+                        if (isSignup) {
+                            auth.createUserWithEmailAndPassword(cleanEmail, cleanPass)
+                                .addOnSuccessListener { res ->
+                                    isLoading = false
+                                    val uid = res.user?.uid ?: ""
+                                    val uname = cleanEmail.substringBefore("@").lowercase()
+                                    val displayName = name.trim().ifBlank { uname }
+                                    onSuccess(
+                                        UserProfileData(
+                                            uid = uid,
+                                            name = displayName,
+                                            username = uname
+                                        )
+                                    )
+                                }
+                                .addOnFailureListener { e ->
+                                    isLoading = false
+                                    Toast.makeText(context, e.localizedMessage ?: "Signup failed", Toast.LENGTH_LONG).show()
+                                }
+                        } else {
+                            auth.signInWithEmailAndPassword(cleanEmail, cleanPass)
+                                .addOnSuccessListener { res ->
+                                    isLoading = false
+                                    val uid = res.user?.uid ?: ""
+                                    val uname = cleanEmail.substringBefore("@").lowercase()
+                                    onSuccess(
+                                        UserProfileData(
+                                            uid = uid,
+                                            name = uname,
+                                            username = uname
+                                        )
+                                    )
+                                }
+                                .addOnFailureListener { e ->
+                                    isLoading = false
+                                    Toast.makeText(context, e.localizedMessage ?: "Login failed", Toast.LENGTH_LONG).show()
+                                }
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                     contentPadding = PaddingValues()
                 ) {
                     Box(modifier = Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(HyperViolet, PlasmaPink))), contentAlignment = Alignment.Center) {
-                        Text(if (isSignup) "Create Account 🚀" else "Log In ✦", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        if (isLoading) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                        } else {
+                            Text(if (isSignup) "Create Account 🚀" else "Log In ✦", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
                     }
                 }
             }
@@ -522,19 +754,16 @@ fun MainDashboardScreen(
         )
     }
 
-    // Active Audio/Video Call Overlay Screen
     if (activeCall != null) {
         CosmicCallOverlayScreen(session = activeCall!!, onEndCall = { activeCall = null })
         return
     }
 
-    // User Going Live Camera Studio
     if (isUserGoingLive) {
         GoLiveStudioScreen(hostUsername = currentUser.username, onEndLive = { isUserGoingLive = false })
         return
     }
 
-    // Story or Live Stream Viewer
     if (activeStory != null) {
         FullScreenStoryOrLiveViewer(story = activeStory!!, onClose = { activeStory = null })
         return
@@ -556,7 +785,6 @@ fun MainDashboardScreen(
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
-                // 5-Icon Bottom Bar: Home | Reels | Snap Camera (Center) | Chats & Calls | Profile
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -570,7 +798,6 @@ fun MainDashboardScreen(
                     BottomNavIcon(Icons.Default.Home, selectedTab == 0) { selectedTab = 0 }
                     BottomNavIcon(Icons.Default.PlayCircleOutline, selectedTab == 1) { selectedTab = 1 }
 
-                    // Center Snapchat-Style Camera & AR Filter Button
                     Box(
                         modifier = Modifier
                             .size(50.dp)
@@ -651,7 +878,6 @@ fun BottomNavIcon(icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-// Snapchat-Style AR Camera & Snap Sender
 @Composable
 fun SnapchatCameraScreen(
     userName: String,
@@ -711,7 +937,6 @@ fun SnapchatCameraScreen(
     ) {
         LiveMovingCosmicCanvas(showHorizon = false)
 
-        // Top Camera Controls
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -737,7 +962,6 @@ fun SnapchatCameraScreen(
             }
         }
 
-        // Center AR Lens Viewfinder + Caption Overlay
         Column(
             modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -757,7 +981,6 @@ fun SnapchatCameraScreen(
             )
         }
 
-        // Bottom Lens Selector + Capture Snap Button
         Column(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -800,7 +1023,6 @@ fun SnapchatCameraScreen(
     }
 }
 
-// Full-Screen Audio & Video Call UI
 @Composable
 fun CosmicCallOverlayScreen(session: ActiveCallSession, onEndCall: () -> Unit) {
     var seconds by remember { mutableIntStateOf(0) }
@@ -866,7 +1088,6 @@ fun CosmicCallOverlayScreen(session: ActiveCallSession, onEndCall: () -> Unit) {
     }
 }
 
-// Host Go Live Studio Screen
 @Composable
 fun GoLiveStudioScreen(hostUsername: String, onEndLive: () -> Unit) {
     val liveChat = remember { mutableStateListOf("vishu_07: Bhai OP live stream! 🔥", "khushi260_: PIVO zindabad 🇮🇳💜", "kashi_boy: Shoutout dedo bhai!") }
@@ -1017,7 +1238,6 @@ fun FeedTabScreen(
                 ) { Text("🔴 LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             }
 
-            // Stories + Live Streams Row
             LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(bottom = 14.dp)) {
                 items(stories) { story ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onOpenStory(story) }) {
@@ -1134,7 +1354,6 @@ fun ChatsTabScreen(
                         Text("🔥 ${activeChat!!.streakCount} Day Streak", color = SnapYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                // Audio Call & Video Call Buttons inside Chat
                 Row {
                     IconButton(onClick = { onStartCall(activeChat!!.name, false) }) {
                         Icon(Icons.Default.Call, contentDescription = "Audio Call", tint = Color(0xFF4ADE80))
@@ -1246,7 +1465,7 @@ fun FullProfileTabScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RotatingNeonRingBox(sizeDp = 46, borderWidth = 2f) {
-                                Text(acc.username.first().uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+                                UserAvatarView(photoUrl = acc.photoUrl, fallbackText = acc.username, fontSizeSp = 18)
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
@@ -1260,7 +1479,7 @@ fun FullProfileTabScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable {
-                        onAddAccount(UserProfileData("New Creator", "pivo.creator${accounts.size + 1}", bio = "New PIVO Account ✨"))
+                        onAddAccount(UserProfileData(name = "New Creator", username = "pivo.creator${accounts.size + 1}", bio = "New PIVO Account ✨"))
                         showAccountSwitcher = false
                     }.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1291,9 +1510,11 @@ fun FullProfileTabScreen(
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            RotatingNeonRingBox(sizeDp = 92, borderWidth = 3f) {
-                Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(HyperViolet, NeonPurple, PlasmaPink))), contentAlignment = Alignment.Center) {
-                    Text(profile.name.first().uppercase(), fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
+            Box(modifier = Modifier.clickable { onOpenEditProfile() }) {
+                RotatingNeonRingBox(sizeDp = 92, borderWidth = 3f) {
+                    Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(HyperViolet, NeonPurple, PlasmaPink))), contentAlignment = Alignment.Center) {
+                        UserAvatarView(photoUrl = profile.photoUrl, fallbackText = profile.name, fontSizeSp = 34)
+                    }
                 }
             }
             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -1362,8 +1583,13 @@ fun StatColumn(value: String, label: String) {
 
 @Composable
 fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) -> Unit, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var name by remember { mutableStateOf(profile.name) }
     var username by remember { mutableStateOf(profile.username) }
+    var photoUrl by remember { mutableStateOf(profile.photoUrl) }
+    var isUploadingDp by remember { mutableStateOf(false) }
     var pronouns by remember { mutableStateOf(profile.pronouns) }
     var bio by remember { mutableStateOf(profile.bio) }
     var website by remember { mutableStateOf(profile.website) }
@@ -1371,16 +1597,78 @@ fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) ->
     var gender by remember { mutableStateOf(profile.gender) }
     var isAi by remember { mutableStateOf(profile.isAiProfile) }
 
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isUploadingDp = true
+            scope.launch {
+                val uploadedUrl = uploadDpToCloudinary(context, uri)
+                isUploadingDp = false
+                if (uploadedUrl != null) {
+                    photoUrl = uploadedUrl
+                    Toast.makeText(context, "DP updated! Done par tap karein ✅", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "DP upload fail hua, dubara try karein", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(VoidBlack).statusBarsPadding().verticalScroll(rememberScrollState()).padding(18.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = StarlightWhite) }
                 Text("Edit profile", color = StarlightWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
-            TextButton(onClick = { onSave(profile.copy(name = name, username = username, pronouns = pronouns, bio = bio, website = website, category = category, gender = gender, isAiProfile = isAi)) }) {
+            TextButton(
+                enabled = !isUploadingDp,
+                onClick = {
+                    onSave(
+                        profile.copy(
+                            name = name,
+                            username = username,
+                            photoUrl = photoUrl,
+                            pronouns = pronouns,
+                            bio = bio,
+                            website = website,
+                            category = category,
+                            gender = gender,
+                            isAiProfile = isAi
+                        )
+                    )
+                }
+            ) {
                 Text("Done", color = CyberCyan, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth().clickable { imagePickerLauncher.launch("image/*") },
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            RotatingNeonRingBox(sizeDp = 96, borderWidth = 3f) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(HyperViolet, PlasmaPink))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isUploadingDp) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp))
+                    } else {
+                        UserAvatarView(photoUrl = photoUrl, fallbackText = name, fontSizeSp = 36)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (isUploadingDp) "Uploading DP..." else "Change profile photo (DP) 📸",
+                color = CyberCyan,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.5.sp
+            )
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(10.dp))
