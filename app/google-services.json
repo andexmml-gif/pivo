@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1024127395801",
+    "project_id": "pivoapp",
+    "storage_bucket": "pivoapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1024127395801:android:7b19360a1944e3349b5bc8",
+        "android_client_info": {
+          "package_name": "com.pivo.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1024127395801-5mfb3qvk8lo58k1f59ok3dpjteb9a4v4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAAou4jqilW2Thq81Lbyyat0swZwAvfKzQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1024127395801-5mfb3qvk8lo58k1f59ok3dpjteb9a4v4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
