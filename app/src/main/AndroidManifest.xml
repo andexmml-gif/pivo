@@ -3,10 +3,11 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="PIVO"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
-        
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -16,7 +17,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        
+
     </application>
 
 </manifest>
+        
