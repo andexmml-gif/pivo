@@ -1,5 +1,6 @@
 package com.pivo.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -20,6 +22,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,9 +65,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -73,6 +79,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.PI
@@ -80,9 +87,12 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-// TODO: अपना फ्री Cloudinary Cloud Name और Unsigned Upload Preset यहाँ डालें
+// Optional: Cloudinary credentials (अगर नहीं डालोगे तो भी Base64 से Firestore में परमानेंट सेव होगा)
 const val CLOUDINARY_CLOUD_NAME = "YOUR_CLOUD_NAME"
 const val CLOUDINARY_UPLOAD_PRESET = "YOUR_UNSIGNED_PRESET"
+
+// केवल इन ऑफिशियल/एडमिन यूज़रनेम्स को डिफ़ॉल्ट Blue Tick मिलेगा
+val OFFICIAL_VERIFIED_USERS = setOf("pivo.app", "pivo.devlopers", "rahulshankhwar421")
 
 val VoidBlack = Color(0xFF04020A)
 val DeepNebula = Color(0xFF0F0722)
@@ -99,60 +109,74 @@ val MutedLavender = Color(0xFFA599C7)
 
 data class UserProfileData(
     val uid: String = "",
-    val name: String = "PIVO Creator",
-    val username: String = "pivo.user",
-    val photoUrl: String = "",
+    val name: String = "",
+    val username: String = "",
+    val photoData: String = "", // HTTP URL या "data:image/jpeg;base64,..." दोनों सपोर्टेड
     val pronouns: String = "",
-    val bio: String = "Your people, your moments. • Made in India 🇮🇳",
-    val website: String = "andexmml-gif.github.io/Pivo-web/",
-    val category: String = "Creator",
+    val bio: String = "Made in India 🇮🇳",
+    val website: String = "",
+    val category: String = "",
     val gender: String = "Prefer not to say",
     val isAiProfile: Boolean = false,
-    val isVerified: Boolean = true,
+    val isVerified: Boolean = false,
     val isPrivate: Boolean = false,
-    val snapScore: Int = 100
+    val snapScore: Int = 0,
+    val followers: List<String> = emptyList(),
+    val following: List<String> = emptyList()
 )
 
-data class PivoStory(
-    val id: Int,
-    val username: String,
-    val caption: String,
-    val timeAgo: String,
+data class LiveStoryItem(
+    val id: String = "",
+    val uid: String = "",
+    val username: String = "",
+    val userPhoto: String = "",
+    val caption: String = "",
+    val imageData: String = "",
     val isLive: Boolean = false,
-    val viewers: Int = 0,
-    val gradient: List<Color>
+    val timestamp: Long = 0L
 )
 
-data class PivoPost(
-    val id: Int,
-    val author: String,
-    val location: String,
-    val time: String,
-    val caption: String,
-    val likes: Int,
-    val comments: MutableList<String>,
-    val isVerified: Boolean,
-    val cardGradient: List<Color>
+data class LivePostItem(
+    val id: String = "",
+    val authorUid: String = "",
+    val authorUsername: String = "",
+    val authorPhoto: String = "",
+    val authorVerified: Boolean = false,
+    val location: String = "",
+    val caption: String = "",
+    val imageData: String = "",
+    val likedBy: List<String> = emptyList(),
+    val comments: List<String> = emptyList(),
+    val timestamp: Long = 0L
 )
 
 data class PivoReelItem(
-    val id: Int,
+    val id: String,
     val sharedBy: String,
     val caption: String,
     val embedUrl: String?,
-    val likes: Int,
     val bgGradient: List<Color>
 )
 
-data class PivoChat(
-    val name: String,
-    val lastMsg: String,
-    val time: String,
-    val streakCount: Int,
-    val hasUnopenedSnap: Boolean = false,
-    val category: String = "Primary",
-    val isGroup: Boolean = false,
-    val isTyping: Boolean = false
+data class LiveChatThread(
+    val chatId: String = "",
+    val peerUid: String = "",
+    val peerUsername: String = "",
+    val peerPhoto: String = "",
+    val lastMsg: String = "",
+    val isSnap: Boolean = false,
+    val streakCount: Int = 0,
+    val timestamp: Long = 0L
+)
+
+data class LiveMessageItem(
+    val id: String = "",
+    val senderUid: String = "",
+    val senderName: String = "",
+    val text: String = "",
+    val imageData: String = "",
+    val isSnap: Boolean = false,
+    val timestamp: Long = 0L
 )
 
 data class ActiveCallSession(
@@ -200,45 +224,59 @@ fun extractInstagramEmbedUrl(rawUrl: String): String? {
     } else null
 }
 
-// DP को 150KB के अंदर कंप्रेस करके Cloudinary पर अपलोड करने का फ़ंक्शन
-suspend fun uploadDpToCloudinary(context: Context, imageUri: Uri): String? = withContext(Dispatchers.IO) {
+// फोटो को कंप्रेस करके परमानेंट स्टोरेज (Cloudinary या Base64 Data URI) में बदलता है — कभी गायब नहीं होगी!
+suspend fun processAndUploadImagePermanent(
+    context: Context,
+    imageUri: Uri,
+    maxDimension: Int = 420,
+    quality: Int = 75
+): String? = withContext(Dispatchers.IO) {
     try {
-        if (CLOUDINARY_CLOUD_NAME == "YOUR_CLOUD_NAME" || CLOUDINARY_UPLOAD_PRESET == "YOUR_UNSIGNED_PRESET") {
-            return@withContext imageUri.toString()
-        }
         val inputStream = context.contentResolver.openInputStream(imageUri) ?: return@withContext null
-        val originalBitmap = BitmapFactory.decodeStream(inputStream)
+        val originalBitmap = BitmapFactory.decodeStream(inputStream) ?: return@withContext null
         inputStream.close()
 
-        val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, 512, 512, true)
+        val ratio = minOf(
+            maxDimension.toFloat() / originalBitmap.width,
+            maxDimension.toFloat() / originalBitmap.height,
+            1f
+        )
+        val targetW = (originalBitmap.width * ratio).toInt().coerceAtLeast(1)
+        val targetH = (originalBitmap.height * ratio).toInt().coerceAtLeast(1)
+        val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, targetW, targetH, true)
+
         val baos = ByteArrayOutputStream()
-        scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+        scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
         val imageBytes = baos.toByteArray()
 
-        val boundary = "----PivoBoundary${System.currentTimeMillis()}"
-        val url = URL("https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        if (CLOUDINARY_CLOUD_NAME != "YOUR_CLOUD_NAME" && CLOUDINARY_UPLOAD_PRESET != "YOUR_UNSIGNED_PRESET") {
+            val boundary = "----PivoBoundary${System.currentTimeMillis()}"
+            val url = URL("https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            }
+            DataOutputStream(conn.outputStream).use { out ->
+                out.writeBytes("--$boundary\r\n")
+                out.writeBytes("Content-Disposition: form-data; name=\"upload_preset\"\r\n\r\n")
+                out.writeBytes("$CLOUDINARY_UPLOAD_PRESET\r\n")
+                out.writeBytes("--$boundary\r\n")
+                out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"pivo_img.jpg\"\r\n")
+                out.writeBytes("Content-Type: image/jpeg\r\n\r\n")
+                out.write(imageBytes)
+                out.writeBytes("\r\n--$boundary--\r\n")
+            }
+            if (conn.responseCode in 200..299) {
+                val resp = conn.inputStream.bufferedReader().readText()
+                val secureUrl = JSONObject(resp).optString("secure_url")
+                if (secureUrl.isNotBlank()) return@withContext secureUrl
+            }
         }
 
-        DataOutputStream(conn.outputStream).use { out ->
-            out.writeBytes("--$boundary\r\n")
-            out.writeBytes("Content-Disposition: form-data; name=\"upload_preset\"\r\n\r\n")
-            out.writeBytes("$CLOUDINARY_UPLOAD_PRESET\r\n")
-
-            out.writeBytes("--$boundary\r\n")
-            out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"pivo_dp.jpg\"\r\n")
-            out.writeBytes("Content-Type: image/jpeg\r\n\r\n")
-            out.write(imageBytes)
-            out.writeBytes("\r\n--$boundary--\r\n")
-        }
-
-        if (conn.responseCode in 200..299) {
-            val resp = conn.inputStream.bufferedReader().readText()
-            JSONObject(resp).optString("secure_url").takeIf { it.isNotBlank() }
-        } else null
+        // परमानेंट Base64 Data URI (Firestore में सीधे सेव होने के लिए)
+        val base64Str = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+        "data:image/jpeg;base64,$base64Str"
     } catch (e: Exception) {
         e.printStackTrace()
         null
@@ -251,7 +289,7 @@ fun saveUserProfileToFirestore(profile: UserProfileData) {
         "uid" to profile.uid,
         "name" to profile.name,
         "username" to profile.username,
-        "photoUrl" to profile.photoUrl,
+        "photoData" to profile.photoData,
         "pronouns" to profile.pronouns,
         "bio" to profile.bio,
         "website" to profile.website,
@@ -268,26 +306,47 @@ fun saveUserProfileToFirestore(profile: UserProfileData) {
         .set(data, SetOptions.merge())
 }
 
+// URL और Base64 दोनों तरह की फोटो दिखाने वाला यूनिवर्सल Avatar व्यू
 @Composable
-fun UserAvatarView(
-    photoUrl: String,
+fun UniversalPhotoView(
+    photoData: String,
     fallbackText: String,
-    fontSizeSp: Int = 20
+    fontSizeSp: Int = 20,
+    modifier: Modifier = Modifier.fillMaxSize()
 ) {
-    if (photoUrl.isNotBlank()) {
+    if (photoData.startsWith("data:image")) {
+        val bitmap = remember(photoData) {
+            try {
+                val cleanBase64 = photoData.substringAfter("base64,")
+                val bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            } catch (e: Exception) {
+                null
+            }
+        }
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = modifier
+            )
+        } else {
+            Box(modifier = modifier, contentAlignment = Alignment.Center) {
+                Text(fallbackText.firstOrNull()?.uppercase() ?: "P", fontSize = fontSizeSp.sp, fontWeight = FontWeight.Black, color = Color.White)
+            }
+        }
+    } else if (photoData.isNotBlank()) {
         AsyncImage(
-            model = photoUrl,
-            contentDescription = "Profile Photo",
+            model = photoData,
+            contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().clip(CircleShape)
+            modifier = modifier
         )
     } else {
-        Text(
-            text = fallbackText.firstOrNull()?.uppercase() ?: "P",
-            fontSize = fontSizeSp.sp,
-            fontWeight = FontWeight.Black,
-            color = Color.White
-        )
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(fallbackText.firstOrNull()?.uppercase() ?: "P", fontSize = fontSizeSp.sp, fontWeight = FontWeight.Black, color = Color.White)
+        }
     }
 }
 
@@ -406,72 +465,77 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
 
-    // ऐप खुलते ही FirebaseAuth से चेक करेगा कि यूज़र पहले से लॉगिन है या नहीं!
-    var firebaseUser by remember { mutableStateOf(auth.currentUser) }
     var currentScreen by remember {
         mutableStateOf(
             if (auth.currentUser != null || incomingSharedLink != null) "main" else "welcome"
         )
     }
 
-    val accounts = remember {
-        mutableStateListOf(
+    var currentUserProfile by remember {
+        val u = auth.currentUser
+        val uname = u?.email?.substringBefore("@")?.lowercase() ?: ""
+        mutableStateOf(
             UserProfileData(
-                uid = auth.currentUser?.uid ?: "",
-                name = auth.currentUser?.displayName ?: "PIVO User",
-                username = auth.currentUser?.email?.substringBefore("@") ?: "pivo.app",
-                bio = "Your people, your moments.\nMade in India 🇮🇳",
-                category = "Creator",
-                isVerified = true,
-                snapScore = 100
+                uid = u?.uid ?: "",
+                name = u?.displayName?.takeIf { it.isNotBlank() } ?: uname,
+                username = uname,
+                isVerified = uname in OFFICIAL_VERIFIED_USERS
             )
         )
     }
-    var activeAccountIndex by remember { mutableIntStateOf(0) }
 
-    // लॉगिन स्टेटस और Firestore से यूज़र की प्रोफ़ाइल + DP ऑटोमैटिक लोड करें
+    // Real-time Firestore Profile Listener — DP और Profile कभी नहीं हटेगी!
     DisposableEffect(auth) {
-        val listener = FirebaseAuth.AuthStateListener { fa ->
+        var docReg: com.google.firebase.firestore.ListenerRegistration? = null
+        val authListener = FirebaseAuth.AuthStateListener { fa ->
             val user = fa.currentUser
-            firebaseUser = user
+            docReg?.remove()
             if (user != null) {
                 currentScreen = "main"
-                val defaultUsername = user.email?.substringBefore("@") ?: "pivo.user"
-                val initialProfile = UserProfileData(
-                    uid = user.uid,
-                    name = user.displayName?.takeIf { it.isNotBlank() } ?: defaultUsername,
-                    username = defaultUsername
-                )
-                accounts[0] = initialProfile
+                val defaultUsername = user.email?.substringBefore("@")?.lowercase() ?: "user"
+                val isOfficial = defaultUsername in OFFICIAL_VERIFIED_USERS
 
-                db.collection("users").document(user.uid).get()
-                    .addOnSuccessListener { doc ->
-                        if (doc.exists()) {
-                            accounts[0] = UserProfileData(
+                docReg = db.collection("users").document(user.uid)
+                    .addSnapshotListener { doc, _ ->
+                        if (doc != null && doc.exists()) {
+                            val uname = doc.getString("username") ?: defaultUsername
+                            currentUserProfile = UserProfileData(
                                 uid = user.uid,
-                                name = doc.getString("name") ?: initialProfile.name,
-                                username = doc.getString("username") ?: initialProfile.username,
-                                photoUrl = doc.getString("photoUrl") ?: "",
+                                name = doc.getString("name") ?: uname,
+                                username = uname,
+                                photoData = doc.getString("photoData") ?: "",
                                 pronouns = doc.getString("pronouns") ?: "",
-                                bio = doc.getString("bio") ?: initialProfile.bio,
-                                website = doc.getString("website") ?: initialProfile.website,
-                                category = doc.getString("category") ?: "Creator",
+                                bio = doc.getString("bio") ?: "Made in India 🇮🇳",
+                                website = doc.getString("website") ?: "",
+                                category = doc.getString("category") ?: "",
                                 gender = doc.getString("gender") ?: "Prefer not to say",
                                 isAiProfile = doc.getBoolean("isAiProfile") ?: false,
-                                isVerified = doc.getBoolean("isVerified") ?: true,
+                                isVerified = (doc.getBoolean("isVerified") ?: false) || (uname in OFFICIAL_VERIFIED_USERS),
                                 isPrivate = doc.getBoolean("isPrivate") ?: false,
-                                snapScore = (doc.getLong("snapScore") ?: 100L).toInt()
+                                snapScore = (doc.getLong("snapScore") ?: 0L).toInt(),
+                                followers = (doc.get("followers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                following = (doc.get("following") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
                             )
                         } else {
-                            saveUserProfileToFirestore(initialProfile)
+                            val freshProfile = UserProfileData(
+                                uid = user.uid,
+                                name = user.displayName?.takeIf { it.isNotBlank() } ?: defaultUsername,
+                                username = defaultUsername,
+                                isVerified = isOfficial
+                            )
+                            currentUserProfile = freshProfile
+                            saveUserProfileToFirestore(freshProfile)
                         }
                     }
             } else {
                 if (incomingSharedLink == null) currentScreen = "welcome"
             }
         }
-        auth.addAuthStateListener(listener)
-        onDispose { auth.removeAuthStateListener(listener) }
+        auth.addAuthStateListener(authListener)
+        onDispose {
+            docReg?.remove()
+            auth.removeAuthStateListener(authListener)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(VoidBlack)) {
@@ -489,8 +553,7 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
                     isSignup = true,
                     onBack = { currentScreen = "welcome" },
                     onSuccess = { createdProfile ->
-                        accounts[0] = createdProfile
-                        activeAccountIndex = 0
+                        currentUserProfile = createdProfile
                         saveUserProfileToFirestore(createdProfile)
                         currentScreen = "main"
                     },
@@ -500,20 +563,16 @@ fun PivoAppRoot(incomingSharedLink: String? = null) {
                     isSignup = false,
                     onBack = { currentScreen = "welcome" },
                     onSuccess = { loggedProfile ->
-                        accounts[0] = loggedProfile
-                        activeAccountIndex = 0
+                        currentUserProfile = loggedProfile
                         currentScreen = "main"
                     },
                     onSwitchMode = { currentScreen = "signup" }
                 )
                 "main" -> MainDashboardScreen(
-                    accounts = accounts,
-                    activeIndex = activeAccountIndex,
+                    currentUser = currentUserProfile,
                     incomingSharedLink = incomingSharedLink,
-                    onSwitchAccount = { activeAccountIndex = it },
-                    onAddAccount = { accounts.add(it); activeAccountIndex = accounts.lastIndex },
                     onUpdateProfile = { updated ->
-                        accounts[activeAccountIndex] = updated
+                        currentUserProfile = updated
                         saveUserProfileToFirestore(updated)
                     },
                     onLogout = {
@@ -612,6 +671,52 @@ fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+    var showForgotDialog by remember { mutableStateOf(false) }
+
+    // Forgot Password Dialog (Firebase Password Reset Email)
+    if (showForgotDialog) {
+        var resetEmail by remember { mutableStateOf(email) }
+        AlertDialog(
+            onDismissRequest = { showForgotDialog = false },
+            containerColor = DeepNebula,
+            title = { Text("Reset Password 🔑", color = StarlightWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Apni registered Gmail ID dalein, password reset link email par bhej diya jayega:", color = MutedLavender, fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = resetEmail,
+                        onValueChange = { resetEmail = it },
+                        label = { Text("Email Address") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = resetEmail.trim()
+                        if (target.isBlank()) {
+                            Toast.makeText(context, "Email ID dalein", Toast.LENGTH_SHORT).show()
+                        } else {
+                            auth.sendPasswordResetEmail(target)
+                                .addOnSuccessListener {
+                                    Toast.makeText(context, "Reset link sent! Apna Gmail Inbox/Spam check karein ✅", Toast.LENGTH_LONG).show()
+                                    showForgotDialog = false
+                                }
+                                .addOnFailureListener { e ->
+                                    Toast.makeText(context, e.localizedMessage ?: "Reset failed", Toast.LENGTH_LONG).show()
+                                }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonPurple)
+                ) { Text("Send Link", color = Color.White) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForgotDialog = false }) { Text("Cancel", color = MutedLavender) }
+            }
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(VoidBlack)) {
         LiveMovingCosmicCanvas(showHorizon = false)
@@ -624,13 +729,23 @@ fun AuthScreen(
             Spacer(modifier = Modifier.height(24.dp))
             Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(GlassSurface).border(1.dp, GlassBorder, RoundedCornerShape(24.dp)).padding(20.dp)) {
                 if (isSignup) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name / Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(modifier = Modifier.height(14.dp))
                 }
                 OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(14.dp))
                 OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password (min 6 chars)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(24.dp))
+
+                if (!isSignup) {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                        TextButton(onClick = { showForgotDialog = true }) {
+                            Text("Forgot password?", color = CyberCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+
                 Button(
                     enabled = !isLoading,
                     onClick = {
@@ -652,7 +767,8 @@ fun AuthScreen(
                                         UserProfileData(
                                             uid = uid,
                                             name = displayName,
-                                            username = uname
+                                            username = uname,
+                                            isVerified = uname in OFFICIAL_VERIFIED_USERS
                                         )
                                     )
                                 }
@@ -670,7 +786,8 @@ fun AuthScreen(
                                         UserProfileData(
                                             uid = uid,
                                             name = uname,
-                                            username = uname
+                                            username = uname,
+                                            isVerified = uname in OFFICIAL_VERIFIED_USERS
                                         )
                                     )
                                 }
@@ -704,54 +821,109 @@ fun AuthScreen(
 
 @Composable
 fun MainDashboardScreen(
-    accounts: List<UserProfileData>,
-    activeIndex: Int,
+    currentUser: UserProfileData,
     incomingSharedLink: String?,
-    onSwitchAccount: (Int) -> Unit,
-    onAddAccount: (UserProfileData) -> Unit,
     onUpdateProfile: (UserProfileData) -> Unit,
     onLogout: () -> Unit
 ) {
-    val currentUser = accounts[activeIndex]
+    val db = remember { FirebaseFirestore.getInstance() }
     var selectedTab by remember { mutableIntStateOf(if (incomingSharedLink != null) 1 else 0) }
     var subScreen by remember { mutableStateOf("none") }
-    var activeStory by remember { mutableStateOf<PivoStory?>(null) }
+    var activeStory by remember { mutableStateOf<LiveStoryItem?>(null) }
     var activeCall by remember { mutableStateOf<ActiveCallSession?>(null) }
     var isUserGoingLive by remember { mutableStateOf(false) }
 
-    val stories = remember {
-        mutableStateListOf(
-            PivoStory(1, "pivo.devlopers", "🔴 LIVE: Building PIVO Beta v1.0 Q&A!", "LIVE", isLive = true, viewers = 428, gradient = listOf(Color(0xFF991B1B), Color(0xFF6A00F4))),
-            PivoStory(2, "Your story", "Late night cosmic coding ✨🇮🇳", "12m", gradient = listOf(Color(0xFF6A00F4), Color(0xFFFF2A85))),
-            PivoStory(3, "khushi260_", "Snapchat streaks + Insta vibes 🔥", "1h", gradient = listOf(Color(0xFF3A0CA3), Color(0xFF9D4EDD))),
-            PivoStory(4, "vishu_07", "🔴 LIVE: Night Ride Firozabad 🏍️", "LIVE", isLive = true, viewers = 192, gradient = listOf(Color(0xFFEF4444), Color(0xFF1E1B4B)))
-        )
-    }
-
-    val posts = remember {
-        mutableStateListOf(
-            PivoPost(1, "pivo.app", "New Delhi • HQ", "1h ago", "Instagram + Snapchat + Live Calls ab ek hi Made-in-India app mein! 🚀💜 #PIVO", 390, mutableListOf("Bhai ekdum fire UI hai 🔥", "Snap streaks mast hai!"), true, listOf(Color(0xFF3C096C), Color(0xFF9D4EDD), Color(0xFFFF2A85))),
-            PivoPost(2, "pivo.app", "Made in India 🇮🇳", "3h ago", "Social Media Mein Bhi Fair System! No Random Suspensions, Creator Friendly ✦", 720, mutableListOf("Best Indian app 🇮🇳"), true, listOf(Color(0xFF10002B), Color(0xFF5A189A), Color(0xFFE056FD)))
-        )
-    }
-
+    // 100% Real Firestore Data Lists (कोई डमी/फेक डेटा नहीं!)
+    val livePosts = remember { mutableStateListOf<LivePostItem>() }
+    val liveStories = remember { mutableStateListOf<LiveStoryItem>() }
+    val allUsers = remember { mutableStateListOf<UserProfileData>() }
     val reels = remember {
         mutableStateListOf<PivoReelItem>().apply {
             if (incomingSharedLink != null) {
-                add(PivoReelItem(100, currentUser.username, "Shared from Instagram 🎬", extractInstagramEmbedUrl(incomingSharedLink), 12, listOf(Color(0xFF3A0CA3), Color(0xFFFF2A85))))
+                add(PivoReelItem("shared_1", currentUser.username, "Shared Reel 🎬", extractInstagramEmbedUrl(incomingSharedLink), listOf(Color(0xFF3A0CA3), Color(0xFFFF2A85))))
             }
-            add(PivoReelItem(1, "pivo.app", "Paste any Instagram Reel link (+ Paste Link) to watch & scroll vertically! 🔥", null, 1840, listOf(Color(0xFF240046), Color(0xFF9D4EDD), Color(0xFFFF2A85))))
         }
     }
 
-    val chats = remember {
-        mutableStateListOf(
-            PivoChat("GEN-Z Squad", "vishu sent a Snap 🟥", "now", streakCount = 48, hasUnopenedSnap = true, category = "Primary", isGroup = true, isTyping = true),
-            PivoChat("HOMIES SQUAD 🥂", "Nehal Kharb: Video call aao 📹", "11m", streakCount = 32, hasUnopenedSnap = true, category = "Primary", isGroup = true),
-            PivoChat("K 🍷", "Delivered Snap • 32m", "32m", streakCount = 19, hasUnopenedSnap = false, category = "Primary"),
-            PivoChat("kashi group 🙏💙", "Seen by Rajat | Rao + 2", "1h", streakCount = 11, category = "Primary", isGroup = true),
-            PivoChat("New Creator Collab", "Hey! Want to join PIVO live?", "2h", streakCount = 1, category = "Requests")
-        )
+    // Real-time Firestore Listeners: Posts, Stories, Users
+    DisposableEffect(currentUser.uid) {
+        val postsReg = db.collection("posts")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) {
+                    livePosts.clear()
+                    snap.documents.forEach { d ->
+                        livePosts.add(
+                            LivePostItem(
+                                id = d.id,
+                                authorUid = d.getString("authorUid") ?: "",
+                                authorUsername = d.getString("authorUsername") ?: "user",
+                                authorPhoto = d.getString("authorPhoto") ?: "",
+                                authorVerified = d.getBoolean("authorVerified") ?: false,
+                                location = d.getString("location") ?: "",
+                                caption = d.getString("caption") ?: "",
+                                imageData = d.getString("imageData") ?: "",
+                                likedBy = (d.get("likedBy") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                comments = (d.get("comments") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                timestamp = d.getLong("timestamp") ?: 0L
+                            )
+                        )
+                    }
+                }
+            }
+
+        val cutoff24h = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        val storiesReg = db.collection("stories")
+            .whereGreaterThan("timestamp", cutoff24h)
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) {
+                    liveStories.clear()
+                    snap.documents.forEach { d ->
+                        liveStories.add(
+                            LiveStoryItem(
+                                id = d.id,
+                                uid = d.getString("uid") ?: "",
+                                username = d.getString("username") ?: "",
+                                userPhoto = d.getString("userPhoto") ?: "",
+                                caption = d.getString("caption") ?: "",
+                                imageData = d.getString("imageData") ?: "",
+                                isLive = d.getBoolean("isLive") ?: false,
+                                timestamp = d.getLong("timestamp") ?: 0L
+                            )
+                        )
+                    }
+                }
+            }
+
+        val usersReg = db.collection("users")
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) {
+                    allUsers.clear()
+                    snap.documents.forEach { d ->
+                        val uname = d.getString("username") ?: ""
+                        allUsers.add(
+                            UserProfileData(
+                                uid = d.id,
+                                name = d.getString("name") ?: uname,
+                                username = uname,
+                                photoData = d.getString("photoData") ?: "",
+                                bio = d.getString("bio") ?: "",
+                                isVerified = (d.getBoolean("isVerified") ?: false) || (uname in OFFICIAL_VERIFIED_USERS),
+                                snapScore = (d.getLong("snapScore") ?: 0L).toInt(),
+                                followers = (d.get("followers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                following = (d.get("following") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                            )
+                        )
+                    }
+                }
+            }
+
+        onDispose {
+            postsReg.remove()
+            storiesReg.remove()
+            usersReg.remove()
+        }
     }
 
     if (activeCall != null) {
@@ -760,7 +932,13 @@ fun MainDashboardScreen(
     }
 
     if (isUserGoingLive) {
-        GoLiveStudioScreen(hostUsername = currentUser.username, onEndLive = { isUserGoingLive = false })
+        GoLiveStudioScreen(
+            currentUser = currentUser,
+            onEndLive = {
+                db.collection("stories").document("live_${currentUser.uid}").delete()
+                isUserGoingLive = false
+            }
+        )
         return
     }
 
@@ -798,6 +976,7 @@ fun MainDashboardScreen(
                     BottomNavIcon(Icons.Default.Home, selectedTab == 0) { selectedTab = 0 }
                     BottomNavIcon(Icons.Default.PlayCircleOutline, selectedTab == 1) { selectedTab = 1 }
 
+                    // Center Real Camera & Filter Button
                     Box(
                         modifier = Modifier
                             .size(50.dp)
@@ -807,7 +986,7 @@ fun MainDashboardScreen(
                             .border(2.dp, Color.White, CircleShape)
                             .clickable { selectedTab = 2 },
                         contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Default.CameraAlt, contentDescription = "Snap Camera", tint = VoidBlack, modifier = Modifier.size(26.dp)) }
+                    ) { Icon(Icons.Default.CameraAlt, contentDescription = "Camera", tint = VoidBlack, modifier = Modifier.size(26.dp)) }
 
                     BottomNavIcon(Icons.AutoMirrored.Filled.Send, selectedTab == 3) { selectedTab = 3 }
                     BottomNavIcon(Icons.Default.Person, selectedTab == 4) { selectedTab = 4 }
@@ -817,46 +996,89 @@ fun MainDashboardScreen(
             Box(modifier = Modifier.padding(innerPadding)) {
                 when (selectedTab) {
                     0 -> FeedTabScreen(
-                        stories = stories,
-                        posts = posts,
+                        currentUser = currentUser,
+                        stories = liveStories,
+                        posts = livePosts,
+                        allUsers = allUsers,
                         onOpenStory = { activeStory = it },
-                        onGoLive = { isUserGoingLive = true },
-                        onAddPost = { cap ->
-                            posts.add(0, PivoPost(posts.size + 1, currentUser.username, "India 🇮🇳", "Just now", cap, 1, mutableListOf(), currentUser.isVerified, listOf(Color(0xFF6A00F4), Color(0xFFFF2A85))))
+                        onGoLive = {
+                            val liveStory = hashMapOf(
+                                "uid" to currentUser.uid,
+                                "username" to currentUser.username,
+                                "userPhoto" to currentUser.photoData,
+                                "caption" to "🔴 ${currentUser.username} is LIVE now!",
+                                "isLive" to true,
+                                "timestamp" to System.currentTimeMillis()
+                            )
+                            db.collection("stories").document("live_${currentUser.uid}").set(liveStory)
+                            isUserGoingLive = true
+                        },
+                        onCreatePost = { caption, imageData, location ->
+                            val postDoc = hashMapOf(
+                                "authorUid" to currentUser.uid,
+                                "authorUsername" to currentUser.username,
+                                "authorPhoto" to currentUser.photoData,
+                                "authorVerified" to currentUser.isVerified,
+                                "location" to location,
+                                "caption" to caption,
+                                "imageData" to imageData,
+                                "likedBy" to emptyList<String>(),
+                                "comments" to emptyList<String>(),
+                                "timestamp" to System.currentTimeMillis()
+                            )
+                            db.collection("posts").add(postDoc)
+                        },
+                        onToggleLike = { post ->
+                            val ref = db.collection("posts").document(post.id)
+                            if (currentUser.uid in post.likedBy) {
+                                ref.update("likedBy", FieldValue.arrayRemove(currentUser.uid))
+                            } else {
+                                ref.update("likedBy", FieldValue.arrayUnion(currentUser.uid))
+                            }
+                        },
+                        onAddComment = { post, commentText ->
+                            db.collection("posts").document(post.id)
+                                .update("comments", FieldValue.arrayUnion("${currentUser.username}: $commentText"))
+                        },
+                        onToggleFollow = { targetUser ->
+                            toggleFollowInFirestore(db, currentUser.uid, targetUser.uid, targetUser.uid in currentUser.following)
                         }
                     )
                     1 -> ReelsTabScreen(reels = reels, onAddReelLink = { url, cap ->
-                        reels.add(0, PivoReelItem(reels.size + 10, currentUser.username, cap.ifBlank { "Shared Reel 🎬" }, extractInstagramEmbedUrl(url), 1, listOf(Color(0xFF3A0CA3), Color(0xFFFF2A85))))
+                        reels.add(0, PivoReelItem("${System.currentTimeMillis()}", currentUser.username, cap.ifBlank { "PIVO Reel 🎬" }, extractInstagramEmbedUrl(url), listOf(Color(0xFF3A0CA3), Color(0xFFFF2A85))))
                     })
-                    2 -> SnapchatCameraScreen(
-                        userName = currentUser.username,
-                        chats = chats,
-                        onSendSnapToChat = { targetChatIndex, snapCaption ->
-                            val old = chats[targetChatIndex]
-                            chats[targetChatIndex] = old.copy(
-                                lastMsg = "Sent Snap: $snapCaption 🟥",
-                                time = "now",
-                                streakCount = old.streakCount + 1
+                    2 -> RealCameraAndFilterScreen(
+                        currentUser = currentUser,
+                        allUsers = allUsers,
+                        onPostStory = { caption, imgData ->
+                            val storyDoc = hashMapOf(
+                                "uid" to currentUser.uid,
+                                "username" to currentUser.username,
+                                "userPhoto" to currentUser.photoData,
+                                "caption" to caption,
+                                "imageData" to imgData,
+                                "isLive" to false,
+                                "timestamp" to System.currentTimeMillis()
                             )
-                            onUpdateProfile(currentUser.copy(snapScore = currentUser.snapScore + 50))
+                            db.collection("stories").add(storyDoc)
+                            db.collection("users").document(currentUser.uid).update("snapScore", FieldValue.increment(25))
+                            selectedTab = 0
+                        },
+                        onSendSnapToUser = { peer, caption, imgData ->
+                            sendRealMessageOrSnap(db, currentUser, peer, caption.ifBlank { "📸 Sent a Snap" }, imgData, isSnap = true)
+                            db.collection("users").document(currentUser.uid).update("snapScore", FieldValue.increment(50))
                             selectedTab = 3
                         },
                         onGoLiveClick = { isUserGoingLive = true }
                     )
                     3 -> ChatsTabScreen(
                         currentUser = currentUser,
-                        chats = chats,
-                        onStartCall = { peer, isVideo -> activeCall = ActiveCallSession(peer, isVideo) },
-                        onCreateGroup = { gName ->
-                            chats.add(0, PivoChat(gName, "Squad created! Invite friends 🚀", "now", streakCount = 1, category = "Primary", isGroup = true))
-                        }
+                        allUsers = allUsers,
+                        onStartCall = { peerName, isVideo -> activeCall = ActiveCallSession(peerName, isVideo) }
                     )
                     4 -> FullProfileTabScreen(
-                        accounts = accounts,
-                        activeIndex = activeIndex,
-                        posts = posts,
-                        onSwitchAccount = onSwitchAccount,
-                        onAddAccount = onAddAccount,
+                        profile = currentUser,
+                        myPosts = livePosts.filter { it.authorUid == currentUser.uid },
                         onOpenEditProfile = { subScreen = "edit_profile" },
                         onOpenSettings = { subScreen = "settings" }
                     )
@@ -864,6 +1086,52 @@ fun MainDashboardScreen(
             }
         }
     }
+}
+
+fun toggleFollowInFirestore(db: FirebaseFirestore, myUid: String, targetUid: String, isCurrentlyFollowing: Boolean) {
+    if (myUid.isBlank() || targetUid.isBlank() || myUid == targetUid) return
+    val myRef = db.collection("users").document(myUid)
+    val targetRef = db.collection("users").document(targetUid)
+    if (isCurrentlyFollowing) {
+        myRef.update("following", FieldValue.arrayRemove(targetUid))
+        targetRef.update("followers", FieldValue.arrayRemove(myUid))
+    } else {
+        myRef.update("following", FieldValue.arrayUnion(targetUid))
+        targetRef.update("followers", FieldValue.arrayUnion(myUid))
+    }
+}
+
+fun getChatRoomId(uid1: String, uid2: String): String {
+    return if (uid1 < uid2) "${uid1}_${uid2}" else "${uid2}_${uid1}"
+}
+
+fun sendRealMessageOrSnap(
+    db: FirebaseFirestore,
+    sender: UserProfileData,
+    peer: UserProfileData,
+    text: String,
+    imageData: String = "",
+    isSnap: Boolean = false
+) {
+    val roomId = getChatRoomId(sender.uid, peer.uid)
+    val now = System.currentTimeMillis()
+    val msgData = hashMapOf(
+        "senderUid" to sender.uid,
+        "senderName" to sender.username,
+        "text" to text,
+        "imageData" to imageData,
+        "isSnap" to isSnap,
+        "timestamp" to now
+    )
+    db.collection("chats").document(roomId).collection("messages").add(msgData)
+
+    val roomMeta = hashMapOf(
+        "participants" to listOf(sender.uid, peer.uid),
+        "lastMsg" to if (isSnap) "🟥 Sent a Snap" else text,
+        "isSnap" to isSnap,
+        "timestamp" to now
+    )
+    db.collection("chats").document(roomId).set(roomMeta, SetOptions.merge())
 }
 
 @Composable
@@ -878,49 +1146,117 @@ fun BottomNavIcon(icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+// 100% Real Camera + Gallery + Live Color Filters Screen
 @Composable
-fun SnapchatCameraScreen(
-    userName: String,
-    chats: List<PivoChat>,
-    onSendSnapToChat: (Int, String) -> Unit,
+fun RealCameraAndFilterScreen(
+    currentUser: UserProfileData,
+    allUsers: List<UserProfileData>,
+    onPostStory: (String, String) -> Unit,
+    onSendSnapToUser: (UserProfileData, String, String) -> Unit,
     onGoLiveClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val lenses = listOf(
-        "🌌 Cosmic Aura" to listOf(Color(0xFF3A0CA3), Color(0xFFFF2A85)),
-        "⚡ Cyber Visor" to listOf(Color(0xFF0F172A), Color(0xFF38BDF8)),
-        "🔥 Streak Flame" to listOf(Color(0xFF7C2D12), Color(0xFFF59E0B)),
-        "👾 Neon Glitch" to listOf(Color(0xFF4C1D95), Color(0xFF10B981))
-    )
-    var selectedLensIndex by remember { mutableIntStateOf(0) }
-    var snapText by remember { mutableStateOf("") }
-    var snapTimer by remember { mutableIntStateOf(5) }
-    var showSendPicker by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    if (showSendPicker) {
+    val filterPresets = listOf(
+        "✨ Natural" to null,
+        "🌌 Cosmic" to ColorMatrix(floatArrayOf(
+            1.1f, 0f, 0.2f, 0f, 15f,
+            0f, 0.9f, 0.2f, 0f, 0f,
+            0.2f, 0.1f, 1.3f, 0f, 25f,
+            0f, 0f, 0f, 1f, 0f
+        )),
+        "🔥 Warm Glow" to ColorMatrix(floatArrayOf(
+            1.25f, 0.1f, 0f, 0f, 12f,
+            0f, 1.05f, 0f, 0f, 5f,
+            0f, 0f, 0.85f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        )),
+        "🖤 Noir B&W" to ColorMatrix().apply { setToSaturation(0f) },
+        "💎 Cyber Cool" to ColorMatrix(floatArrayOf(
+            0.85f, 0f, 0.1f, 0f, 0f,
+            0f, 1.1f, 0.15f, 0f, 10f,
+            0.1f, 0.15f, 1.3f, 0f, 20f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+    )
+
+    var selectedFilterIdx by remember { mutableIntStateOf(0) }
+    var capturedImageData by remember { mutableStateOf("") }
+    var captionText by remember { mutableStateOf("") }
+    var isProcessing by remember { mutableStateOf(false) }
+    var showSendDialog by remember { mutableStateOf(false) }
+
+    val tempCameraUri = remember {
+        val file = File(context.cacheDir, "pivo_snap_${System.currentTimeMillis()}.jpg")
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) {
+            isProcessing = true
+            scope.launch {
+                val data = processAndUploadImagePermanent(context, tempCameraUri, maxDimension = 540, quality = 75)
+                isProcessing = false
+                if (data != null) capturedImageData = data
+            }
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) cameraLauncher.launch(tempCameraUri)
+        else Toast.makeText(context, "Camera permission zaroori hai", Toast.LENGTH_SHORT).show()
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            isProcessing = true
+            scope.launch {
+                val data = processAndUploadImagePermanent(context, uri, maxDimension = 540, quality = 75)
+                isProcessing = false
+                if (data != null) capturedImageData = data
+            }
+        }
+    }
+
+    if (showSendDialog) {
+        val otherUsers = allUsers.filter { it.uid != currentUser.uid }
         AlertDialog(
-            onDismissRequest = { showSendPicker = false },
+            onDismissRequest = { showSendDialog = false },
             containerColor = DeepNebula,
-            title = { Text("Send Snap To 🔥", color = StarlightWhite, fontWeight = FontWeight.Bold) },
+            title = { Text("Share Snap / Story 🔥", color = StarlightWhite, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    chats.forEachIndexed { idx, chat ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(GlassSurface)
-                                .clickable {
-                                    onSendSnapToChat(idx, snapText.ifBlank { lenses[selectedLensIndex].first })
-                                    Toast.makeText(context, "Snap sent! 🔥 +1 Streak", Toast.LENGTH_SHORT).show()
-                                    showSendPicker = false
-                                }
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(chat.name, color = StarlightWhite, fontWeight = FontWeight.SemiBold)
-                            Text("🔥 ${chat.streakCount}", color = SnapYellow, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = {
+                            onPostStory(captionText.ifBlank { "PIVO Story ✨" }, capturedImageData)
+                            Toast.makeText(context, "Story live ho gayi! +25 Snap Score 🔥", Toast.LENGTH_SHORT).show()
+                            showSendDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonPurple)
+                    ) { Text("📢 Post to Your Story (24h)", color = Color.White, fontWeight = FontWeight.Bold) }
+
+                    if (otherUsers.isEmpty()) {
+                        Text("Abhi koi aur user registered nahi hai — apne doston ko invite karein!", color = MutedLavender, fontSize = 12.sp)
+                    } else {
+                        Text("Send Direct Snap to Friend:", color = MutedLavender, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        otherUsers.forEach { user ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(GlassSurface)
+                                    .clickable {
+                                        onSendSnapToUser(user, captionText, capturedImageData)
+                                        Toast.makeText(context, "Snap sent to @${user.username}! 🔥", Toast.LENGTH_SHORT).show()
+                                        showSendDialog = false
+                                    }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("@${user.username}", color = StarlightWhite, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -929,96 +1265,115 @@ fun SnapchatCameraScreen(
         )
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(lenses[selectedLensIndex].second))
-            .padding(16.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(VoidBlack).padding(16.dp)) {
         LiveMovingCosmicCanvas(showHorizon = false)
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .clickable { snapTimer = if (snapTimer == 5) 10 else if (snapTimer == 10) 3 else 5 }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text("⏱ ${snapTimer}s Snap", color = SnapYellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-
+        // Top Bar
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("PIVO Camera 📸", color = StarlightWhite, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
             Button(
                 onClick = onGoLiveClick,
                 colors = ButtonDefaults.buttonColors(containerColor = LiveRed),
                 shape = RoundedCornerShape(20.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-            ) {
-                Text("🔴 GO LIVE", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
-            }
+            ) { Text("🔴 GO LIVE", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp) }
         }
 
-        Column(
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            RotatingNeonRingBox(sizeDp = 150, borderWidth = 3f) {
-                Text(lenses[selectedLensIndex].first.take(2), fontSize = 48.sp)
+        // Center Viewfinder / Captured Photo Preview with Live Filter
+        Column(modifier = Modifier.align(Alignment.Center).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .height(310.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(GlassSurface)
+                    .border(2.dp, GlassBorder, RoundedCornerShape(24.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isProcessing) {
+                    CircularProgressIndicator(color = PlasmaPink)
+                } else if (capturedImageData.isNotBlank()) {
+                    val bitmap = remember(capturedImageData) {
+                        try {
+                            val bytes = Base64.decode(capturedImageData.substringAfter("base64,"), Base64.DEFAULT)
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                        } catch (e: Exception) { null }
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            colorFilter = filterPresets[selectedFilterIdx].second?.let { ColorFilter.colorMatrix(it) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        UniversalPhotoView(photoData = capturedImageData, fallbackText = "P")
+                    }
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(20.dp)) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = SnapYellow, modifier = Modifier.size(56.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Real Camera & Gallery Studio", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Neeche Camera shutter ya Gallery se real photo lein aur filter lagayein", color = MutedLavender, fontSize = 12.sp, textAlign = TextAlign.Center)
+                    }
+                }
             }
+
             Spacer(modifier = Modifier.height(12.dp))
-            Text(lenses[selectedLensIndex].first, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-            Spacer(modifier = Modifier.height(14.dp))
             OutlinedTextField(
-                value = snapText,
-                onValueChange = { snapText = it },
-                placeholder = { Text("Add a Snap caption...", color = Color.White.copy(alpha = 0.7f)) },
-                modifier = Modifier.fillMaxWidth(0.85f),
+                value = captionText,
+                onValueChange = { captionText = it },
+                placeholder = { Text("Add caption for Story or Snap...") },
+                modifier = Modifier.fillMaxWidth(0.88f),
                 shape = RoundedCornerShape(16.dp)
             )
         }
 
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(lenses.size) { idx ->
-                    val active = idx == selectedLensIndex
+        // Bottom Filter Strip + Real Camera / Gallery / Send Controls
+        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(filterPresets.size) { idx ->
+                    val active = idx == selectedFilterIdx
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (active) SnapYellow else Color.Black.copy(alpha = 0.55f))
-                            .clickable { selectedLensIndex = idx }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (active) SnapYellow else GlassSurface)
+                            .clickable { selectedFilterIdx = idx }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
                     ) {
-                        Text(
-                            text = lenses[idx].first,
-                            color = if (active) VoidBlack else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
+                        Text(filterPresets[idx].first, color = if (active) VoidBlack else Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                // Gallery Pick
+                IconButton(
+                    onClick = { galleryLauncher.launch("image/*") },
+                    modifier = Modifier.size(50.dp).clip(CircleShape).background(GlassSurface)
+                ) { Icon(Icons.Default.PhotoLibrary, contentDescription = "Gallery", tint = CyberCyan) }
+
+                // Real Camera Capture Button
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(70.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.25f))
                         .border(4.dp, SnapYellow, CircleShape)
-                        .clickable { showSendPicker = true },
+                        .clickable { permissionLauncher.launch(Manifest.permission.CAMERA) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(modifier = Modifier.size(54.dp).clip(CircleShape).background(Color.White))
+                    Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color.White))
                 }
+
+                // Send / Post Button
+                IconButton(
+                    enabled = capturedImageData.isNotBlank() || captionText.isNotBlank(),
+                    onClick = { showSendDialog = true },
+                    modifier = Modifier.size(50.dp).clip(CircleShape).background(if (capturedImageData.isNotBlank() || captionText.isNotBlank()) PlasmaPink else GlassSurface)
+                ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White) }
             }
-            Text("Tap shutter to Send Snap & Keep Streak 🔥", color = Color.White, fontSize = 11.5.sp, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }
@@ -1050,18 +1405,18 @@ fun CosmicCallOverlayScreen(session: ActiveCallSession, onEndCall: () -> Unit) {
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 30.dp)) {
                 Text(
-                    text = if (session.isVideoCall) "📹 PIVO Encrypted Video Call" else "📞 PIVO HD Audio Call",
+                    text = if (session.isVideoCall) "📹 PIVO Video Call" else "📞 PIVO Audio Call",
                     color = CyberCyan,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
                 )
                 Spacer(modifier = Modifier.height(24.dp))
                 RotatingNeonRingBox(sizeDp = 120, borderWidth = 3.5f) {
-                    Text(session.peerName.first().uppercase(), fontSize = 42.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text(session.peerName.firstOrNull()?.uppercase() ?: "P", fontSize = 42.sp, fontWeight = FontWeight.Black, color = Color.White)
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(session.peerName, color = StarlightWhite, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-                Text("Connected • $timeText", color = Color(0xFF4ADE80), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("Calling • $timeText", color = Color(0xFF4ADE80), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Row(
@@ -1088,21 +1443,33 @@ fun CosmicCallOverlayScreen(session: ActiveCallSession, onEndCall: () -> Unit) {
     }
 }
 
+// Real Firestore Live Stream Room
 @Composable
-fun GoLiveStudioScreen(hostUsername: String, onEndLive: () -> Unit) {
-    val liveChat = remember { mutableStateListOf("vishu_07: Bhai OP live stream! 🔥", "khushi260_: PIVO zindabad 🇮🇳💜", "kashi_boy: Shoutout dedo bhai!") }
+fun GoLiveStudioScreen(currentUser: UserProfileData, onEndLive: () -> Unit) {
+    val db = remember { FirebaseFirestore.getInstance() }
+    val liveChat = remember { mutableStateListOf<String>() }
     var commentText by remember { mutableStateOf("") }
+
+    DisposableEffect(currentUser.uid) {
+        val reg = db.collection("live_rooms").document(currentUser.uid).collection("comments")
+            .orderBy("timestamp", Query.Direction.ASCENDING)
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) {
+                    liveChat.clear()
+                    snap.documents.forEach { d ->
+                        liveChat.add("${d.getString("user") ?: ""}: ${d.getString("text") ?: ""}")
+                    }
+                }
+            }
+        onDispose { reg.remove() }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF450A0A), VoidBlack))).statusBarsPadding().padding(16.dp)) {
         LiveMovingCosmicCanvas(showHorizon = false)
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(LiveRed).padding(horizontal = 10.dp, vertical = 4.dp)) {
-                    Text("🔴 LIVE", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("👁 514 watching", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(LiveRed).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                Text("🔴 LIVE NOW", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
             }
             Button(onClick = onEndLive, colors = ButtonDefaults.buttonColors(containerColor = GlassSurface)) {
                 Text("End Live", color = PlasmaPink, fontWeight = FontWeight.Bold)
@@ -1111,24 +1478,26 @@ fun GoLiveStudioScreen(hostUsername: String, onEndLive: () -> Unit) {
 
         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
             RotatingNeonRingBox(sizeDp = 120, borderWidth = 3f, isLive = true) {
-                Text(hostUsername.first().uppercase(), fontSize = 40.sp, fontWeight = FontWeight.Black, color = Color.White)
+                UniversalPhotoView(photoData = currentUser.photoData, fallbackText = currentUser.username, fontSizeSp = 40)
             }
             Spacer(modifier = Modifier.height(10.dp))
-            Text("@$hostUsername is LIVE!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("@${currentUser.username} is LIVE!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
 
         Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            liveChat.takeLast(4).forEach { msg ->
+            liveChat.takeLast(5).forEach { msg ->
                 Box(modifier = Modifier.padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Text(msg, color = Color.White, fontSize = 12.5.sp)
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = commentText, onValueChange = { commentText = it }, placeholder = { Text("Say something live...") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(20.dp))
+                OutlinedTextField(value = commentText, onValueChange = { commentText = it }, placeholder = { Text("Live chat...") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(20.dp))
                 IconButton(onClick = {
                     if (commentText.isNotBlank()) {
-                        liveChat.add("$hostUsername: $commentText")
+                        db.collection("live_rooms").document(currentUser.uid).collection("comments").add(
+                            hashMapOf("user" to currentUser.username, "text" to commentText.trim(), "timestamp" to System.currentTimeMillis())
+                        )
                         commentText = ""
                     }
                 }) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = PlasmaPink) }
@@ -1138,7 +1507,7 @@ fun GoLiveStudioScreen(hostUsername: String, onEndLive: () -> Unit) {
 }
 
 @Composable
-fun FullScreenStoryOrLiveViewer(story: PivoStory, onClose: () -> Unit) {
+fun FullScreenStoryOrLiveViewer(story: LiveStoryItem, onClose: () -> Unit) {
     var progress by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(story) {
         if (!story.isLive) {
@@ -1150,7 +1519,10 @@ fun FullScreenStoryOrLiveViewer(story: PivoStory, onClose: () -> Unit) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(story.gradient)).statusBarsPadding().padding(18.dp)) {
+    Box(modifier = Modifier.fillMaxSize().background(VoidBlack).statusBarsPadding().padding(18.dp)) {
+        if (story.imageData.isNotBlank()) {
+            UniversalPhotoView(photoData = story.imageData, fallbackText = story.username, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)))
+        }
         Column {
             if (!story.isLive) {
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(3.dp), color = Color.White, trackColor = Color.White.copy(alpha = 0.3f))
@@ -1160,61 +1532,170 @@ fun FullScreenStoryOrLiveViewer(story: PivoStory, onClose: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (story.isLive) {
                         Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(LiveRed).padding(horizontal = 8.dp, vertical = 3.dp)) {
-                            Text("LIVE • 👁 ${story.viewers}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("LIVE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                     }
-                    Text(story.username, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("@${story.username}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White) }
             }
         }
-        Text(
-            text = story.caption,
-            color = Color.White,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.ExtraBold,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.align(Alignment.Center).padding(20.dp)
-        )
+        if (story.caption.isNotBlank()) {
+            Box(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = 0.65f)).padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Text(story.caption, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedTabScreen(
-    stories: List<PivoStory>,
-    posts: List<PivoPost>,
-    onOpenStory: (PivoStory) -> Unit,
+    currentUser: UserProfileData,
+    stories: List<LiveStoryItem>,
+    posts: List<LivePostItem>,
+    allUsers: List<UserProfileData>,
+    onOpenStory: (LiveStoryItem) -> Unit,
     onGoLive: () -> Unit,
-    onAddPost: (String) -> Unit
+    onCreatePost: (String, String, String) -> Unit,
+    onToggleLike: (LivePostItem) -> Unit,
+    onAddComment: (LivePostItem, String) -> Unit,
+    onToggleFollow: (UserProfileData) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showCreate by remember { mutableStateOf(false) }
-    var commentPost by remember { mutableStateOf<PivoPost?>(null) }
+    var showSearchUsers by remember { mutableStateOf(false) }
+    var commentPost by remember { mutableStateOf<LivePostItem?>(null) }
 
+    // Real Post Creator with Photo Picker
     if (showCreate) {
         var cap by remember { mutableStateOf("") }
+        var loc by remember { mutableStateOf("") }
+        var pickedPhotoData by remember { mutableStateOf("") }
+        var uploading by remember { mutableStateOf(false) }
+
+        val postPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) {
+                uploading = true
+                scope.launch {
+                    val data = processAndUploadImagePermanent(context, uri, maxDimension = 640, quality = 78)
+                    uploading = false
+                    if (data != null) pickedPhotoData = data
+                }
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = { showCreate = false }, containerColor = DeepNebula,
-            title = { Text("New PIVO Post ✦", color = StarlightWhite) },
-            text = { OutlinedTextField(value = cap, onValueChange = { cap = it }, placeholder = { Text("Share something...") }) },
-            confirmButton = { Button(onClick = { if (cap.isNotBlank()) onAddPost(cap); showCreate = false }) { Text("Post") } }
+            onDismissRequest = { showCreate = false },
+            containerColor = DeepNebula,
+            title = { Text("New Live Post ✦", color = StarlightWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { postPhotoPicker.launch("image/*") },
+                        colors = ButtonDefaults.buttonColors(containerColor = GlassSurface),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = CyberCyan)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (uploading) "Processing photo..." else if (pickedPhotoData.isNotBlank()) "Photo Selected ✅" else "Select Photo from Gallery", color = StarlightWhite)
+                    }
+                    OutlinedTextField(value = cap, onValueChange = { cap = it }, placeholder = { Text("Write a caption...") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = loc, onValueChange = { loc = it }, placeholder = { Text("Location (optional)...") }, modifier = Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !uploading && (cap.isNotBlank() || pickedPhotoData.isNotBlank()),
+                    onClick = {
+                        onCreatePost(cap.trim(), pickedPhotoData, loc.trim())
+                        showCreate = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PlasmaPink)
+                ) { Text("Share Post", color = Color.White) }
+            }
         )
     }
 
+    // Real User Search & Follow Sheet
+    if (showSearchUsers) {
+        var query by remember { mutableStateOf("") }
+        ModalBottomSheet(onDismissRequest = { showSearchUsers = false }, containerColor = DeepNebula) {
+            Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                Text("Discover Real PIVO Users 🔍", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(value = query, onValueChange = { query = it }, placeholder = { Text("Search username...") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                val filtered = allUsers.filter {
+                    it.uid != currentUser.uid && (query.isBlank() || it.username.contains(query, ignoreCase = true) || it.name.contains(query, ignoreCase = true))
+                }
+                if (filtered.isEmpty()) {
+                    Text("Koi user nahi mila. Doston ko PIVO join karne ke liye invite karein!", color = MutedLavender, fontSize = 13.sp)
+                } else {
+                    filtered.forEach { user ->
+                        val isFollowing = user.uid in currentUser.following
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RotatingNeonRingBox(sizeDp = 46, borderWidth = 2f) {
+                                    UniversalPhotoView(photoData = user.photoData, fallbackText = user.username, fontSizeSp = 18)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("@${user.username}", color = StarlightWhite, fontWeight = FontWeight.Bold)
+                                        if (user.isVerified) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(Icons.Default.Verified, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(15.dp))
+                                        }
+                                    }
+                                    Text(user.name, color = MutedLavender, fontSize = 12.sp)
+                                }
+                            }
+                            Button(
+                                onClick = { onToggleFollow(user) },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (isFollowing) GlassSurface else NeonPurple),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
+                            ) {
+                                Text(if (isFollowing) "Following" else "Follow", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+
     if (commentPost != null) {
+        val liveTargetPost = posts.find { it.id == commentPost!!.id } ?: commentPost!!
         var newComment by remember { mutableStateOf("") }
         ModalBottomSheet(onDismissRequest = { commentPost = null }, containerColor = DeepNebula) {
             Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
-                Text("Comments (${commentPost!!.comments.size})", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Comments (${liveTargetPost.comments.size})", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(modifier = Modifier.height(10.dp))
-                commentPost!!.comments.forEach { c -> Text("• $c", color = StarlightWhite, modifier = Modifier.padding(vertical = 4.dp)) }
+                if (liveTargetPost.comments.isEmpty()) {
+                    Text("No comments yet. Be the first!", color = MutedLavender, fontSize = 13.sp)
+                } else {
+                    liveTargetPost.comments.forEach { c -> Text("• $c", color = StarlightWhite, modifier = Modifier.padding(vertical = 4.dp)) }
+                }
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(value = newComment, onValueChange = { newComment = it }, placeholder = { Text("Add a comment...") }, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { if (newComment.isNotBlank()) { commentPost!!.comments.add(newComment); newComment = "" } }) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = PlasmaPink)
-                    }
+                    IconButton(onClick = {
+                        if (newComment.isNotBlank()) {
+                            onAddComment(liveTargetPost, newComment.trim())
+                            newComment = ""
+                        }
+                    }) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = PlasmaPink) }
                 }
                 Spacer(modifier = Modifier.height(20.dp))
             }
@@ -1224,7 +1705,10 @@ fun FeedTabScreen(
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.Add, contentDescription = null, tint = StarlightWhite) }
+                Row {
+                    IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.AddBox, contentDescription = "New Post", tint = StarlightWhite) }
+                    IconButton(onClick = { showSearchUsers = true }) { Icon(Icons.Default.Search, contentDescription = "Search Users", tint = StarlightWhite) }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FourPointStar(modifier = Modifier.size(20.dp), color = PlasmaPink)
                     Spacer(modifier = Modifier.width(6.dp))
@@ -1238,28 +1722,46 @@ fun FeedTabScreen(
                 ) { Text("🔴 LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
             }
 
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(bottom = 14.dp)) {
-                items(stories) { story ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onOpenStory(story) }) {
-                        Box(contentAlignment = Alignment.BottomCenter) {
-                            RotatingNeonRingBox(sizeDp = 68, borderWidth = 2.5f, isLive = story.isLive) {
-                                Text(story.username.first().uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                            }
-                            if (story.isLive) {
-                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(LiveRed).padding(horizontal = 6.dp, vertical = 1.dp)) {
-                                    Text("LIVE", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+            // Real Stories Row (केवल असली अपलोड की हुई स्टोरीज और लाइव स्ट्रीम्स)
+            if (stories.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(bottom = 14.dp)) {
+                    items(stories, key = { it.id }) { story ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onOpenStory(story) }) {
+                            Box(contentAlignment = Alignment.BottomCenter) {
+                                RotatingNeonRingBox(sizeDp = 68, borderWidth = 2.5f, isLive = story.isLive) {
+                                    UniversalPhotoView(photoData = story.userPhoto, fallbackText = story.username, fontSizeSp = 20)
+                                }
+                                if (story.isLive) {
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(LiveRed).padding(horizontal = 6.dp, vertical = 1.dp)) {
+                                        Text("LIVE", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                    }
                                 }
                             }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(story.username, color = MutedLavender, fontSize = 11.sp, maxLines = 1)
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(story.username, color = MutedLavender, fontSize = 11.sp, maxLines = 1)
                     }
                 }
             }
         }
 
+        if (posts.isEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 60.dp).clip(RoundedCornerShape(22.dp)).background(GlassSurface).border(1.dp, GlassBorder, RoundedCornerShape(22.dp)).padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    FourPointStar(modifier = Modifier.size(36.dp), color = PlasmaPink)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Welcome to PIVO!", color = StarlightWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Abhi feed fresh hai. Upar '+' icon par tap karke apni pehli real photo ya post share karein!", color = MutedLavender, fontSize = 13.5.sp, textAlign = TextAlign.Center)
+                }
+            }
+        }
+
         items(posts, key = { it.id }) { post ->
-            var liked by remember { mutableStateOf(false) }
+            val liked = currentUser.uid in post.likedBy
             var saved by remember { mutableStateOf(false) }
             var showBigHeart by remember { mutableStateOf(false) }
             val heartScale by animateFloatAsState(
@@ -1272,31 +1774,53 @@ fun FeedTabScreen(
             Column(modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp).clip(RoundedCornerShape(22.dp)).background(GlassSurface).border(1.dp, GlassBorder, RoundedCornerShape(22.dp)).padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RotatingNeonRingBox(sizeDp = 42, borderWidth = 2f) {
-                        Text(post.author.first().uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+                        UniversalPhotoView(photoData = post.authorPhoto, fallbackText = post.authorUsername, fontSizeSp = 16)
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(post.author, color = StarlightWhite, fontWeight = FontWeight.Bold)
-                        Text(post.location, color = MutedLavender, fontSize = 11.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(post.authorUsername, color = StarlightWhite, fontWeight = FontWeight.Bold)
+                            if (post.authorVerified) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.Default.Verified, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                        if (post.location.isNotBlank()) Text(post.location, color = MutedLavender, fontSize = 11.sp)
                     }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 Box(
-                    modifier = Modifier.fillMaxWidth().height(215.dp).clip(RoundedCornerShape(16.dp)).background(Brush.linearGradient(post.cardGradient))
-                        .pointerInput(Unit) { detectTapGestures(onDoubleTap = { liked = true; showBigHeart = true }) }
-                        .padding(16.dp)
+                    modifier = Modifier.fillMaxWidth().height(if (post.imageData.isNotBlank()) 280.dp else 170.dp).clip(RoundedCornerShape(16.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF3C096C), Color(0xFF9D4EDD), Color(0xFFFF2A85))))
+                        .pointerInput(post.id) {
+                            detectTapGestures(onDoubleTap = {
+                                if (!liked) onToggleLike(post)
+                                showBigHeart = true
+                            })
+                        }
                 ) {
-                    Text(post.caption, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.BottomStart))
+                    if (post.imageData.isNotBlank()) {
+                        UniversalPhotoView(photoData = post.imageData, fallbackText = post.authorUsername)
+                    }
+                    if (post.caption.isNotBlank()) {
+                        Box(
+                            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                                .background(if (post.imageData.isNotBlank()) Color.Black.copy(alpha = 0.55f) else Color.Transparent)
+                                .padding(14.dp)
+                        ) {
+                            Text(post.caption, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                     if (heartScale > 0.05f) {
                         Icon(Icons.Default.Favorite, contentDescription = null, tint = Color.White.copy(alpha = 0.92f), modifier = Modifier.size(76.dp).align(Alignment.Center).scale(heartScale))
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { liked = !liked; if (liked) showBigHeart = true }) {
+                        IconButton(onClick = { onToggleLike(post); if (!liked) showBigHeart = true }) {
                             Icon(if (liked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, contentDescription = null, tint = if (liked) PlasmaPink else StarlightWhite)
                         }
-                        Text("${post.likes + if (liked) 1 else 0}", color = StarlightWhite, fontSize = 13.sp)
+                        Text("${post.likedBy.size}", color = StarlightWhite, fontSize = 13.sp)
                         Spacer(modifier = Modifier.width(12.dp))
                         IconButton(onClick = { commentPost = post }) { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = StarlightWhite) }
                         Text("${post.comments.size}", color = StarlightWhite, fontSize = 13.sp)
@@ -1308,198 +1832,185 @@ fun FeedTabScreen(
     }
 }
 
+// 100% Real Firestore 1-to-1 Chat & Snaps Screen
 @Composable
 fun ChatsTabScreen(
     currentUser: UserProfileData,
-    chats: List<PivoChat>,
-    onStartCall: (String, Boolean) -> Unit,
-    onCreateGroup: (String) -> Unit
+    allUsers: List<UserProfileData>,
+    onStartCall: (String, Boolean) -> Unit
 ) {
-    var selectedFilter by remember { mutableStateOf("Primary") }
-    var activeChat by remember { mutableStateOf<PivoChat?>(null) }
-    var showNewGroup by remember { mutableStateOf(false) }
-    var viewingSnapFrom by remember { mutableStateOf<String?>(null) }
+    val db = remember { FirebaseFirestore.getInstance() }
+    var activePeer by remember { mutableStateOf<UserProfileData?>(null) }
+    var searchUserQuery by remember { mutableStateOf("") }
 
-    if (viewingSnapFrom != null) {
-        LaunchedEffect(viewingSnapFrom) { delay(3000L); viewingSnapFrom = null }
-        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(HyperViolet, PlasmaPink))), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("👻 Snap from ${viewingSnapFrom}", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-                Spacer(modifier = Modifier.height(10.dp))
-                Text("Disappearing in 3 seconds... 🔥", color = SnapYellow, fontWeight = FontWeight.Bold)
-            }
-        }
-        return
-    }
-
-    if (showNewGroup) {
-        var gName by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showNewGroup = false }, containerColor = DeepNebula,
-            title = { Text("Create Squad 👥", color = StarlightWhite) },
-            text = { OutlinedTextField(value = gName, onValueChange = { gName = it }, placeholder = { Text("Squad Name...") }) },
-            confirmButton = { Button(onClick = { if (gName.isNotBlank()) onCreateGroup(gName); showNewGroup = false }) { Text("Create") } }
-        )
-    }
-
-    if (activeChat != null) {
-        val msgs = remember { mutableStateListOf(activeChat!!.lastMsg) }
+    if (activePeer != null) {
+        val peer = activePeer!!
+        val roomId = getChatRoomId(currentUser.uid, peer.uid)
+        val messages = remember { mutableStateListOf<LiveMessageItem>() }
         var draft by remember { mutableStateOf("") }
+
+        DisposableEffect(roomId) {
+            val reg = db.collection("chats").document(roomId).collection("messages")
+                .orderBy("timestamp", Query.Direction.ASCENDING)
+                .addSnapshotListener { snap, _ ->
+                    if (snap != null) {
+                        messages.clear()
+                        snap.documents.forEach { d ->
+                            messages.add(
+                                LiveMessageItem(
+                                    id = d.id,
+                                    senderUid = d.getString("senderUid") ?: "",
+                                    senderName = d.getString("senderName") ?: "",
+                                    text = d.getString("text") ?: "",
+                                    imageData = d.getString("imageData") ?: "",
+                                    isSnap = d.getBoolean("isSnap") ?: false,
+                                    timestamp = d.getLong("timestamp") ?: 0L
+                                )
+                            )
+                        }
+                    }
+                }
+            onDispose { reg.remove() }
+        }
+
         Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { activeChat = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = StarlightWhite) }
-                    Column {
-                        Text(activeChat!!.name, color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Text("🔥 ${activeChat!!.streakCount} Day Streak", color = SnapYellow, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = { activePeer = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = StarlightWhite) }
+                    RotatingNeonRingBox(sizeDp = 40, borderWidth = 2f) {
+                        UniversalPhotoView(photoData = peer.photoData, fallbackText = peer.username, fontSizeSp = 15)
                     }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("@${peer.username}", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 }
                 Row {
-                    IconButton(onClick = { onStartCall(activeChat!!.name, false) }) {
-                        Icon(Icons.Default.Call, contentDescription = "Audio Call", tint = Color(0xFF4ADE80))
-                    }
-                    IconButton(onClick = { onStartCall(activeChat!!.name, true) }) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = CyberCyan)
+                    IconButton(onClick = { onStartCall(peer.username, false) }) { Icon(Icons.Default.Call, contentDescription = "Audio Call", tint = Color(0xFF4ADE80)) }
+                    IconButton(onClick = { onStartCall(peer.username, true) }) { Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = CyberCyan) }
+                }
+            }
+
+            LazyColumn(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                items(messages, key = { it.id }) { m ->
+                    val isMine = m.senderUid == currentUser.uid
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        contentAlignment = if (isMine) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isMine) NeonPurple else GlassSurface)
+                                .padding(12.dp)
+                        ) {
+                            if (m.imageData.isNotBlank()) {
+                                UniversalPhotoView(photoData = m.imageData, fallbackText = "S", modifier = Modifier.size(180.dp).clip(RoundedCornerShape(12.dp)))
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                            if (m.text.isNotBlank()) Text(m.text, color = Color.White, fontSize = 14.sp)
+                        }
                     }
                 }
             }
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(msgs) { m -> Box(modifier = Modifier.padding(vertical = 6.dp).clip(RoundedCornerShape(14.dp)).background(GlassSurface).padding(12.dp)) { Text(m, color = StarlightWhite) } }
-            }
-            Row {
-                OutlinedTextField(value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f), placeholder = { Text("Send chat or Snap...") })
-                IconButton(onClick = { if (draft.isNotBlank()) { msgs.add(draft); draft = "" } }) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = PlasmaPink) }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message @${peer.username}...") }, shape = RoundedCornerShape(18.dp))
+                IconButton(onClick = {
+                    if (draft.isNotBlank()) {
+                        sendRealMessageOrSnap(db, currentUser, peer, draft.trim())
+                        draft = ""
+                    }
+                }) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = PlasmaPink) }
             }
         }
         return
+    }
+
+    val realContacts = allUsers.filter {
+        it.uid != currentUser.uid && (searchUserQuery.isBlank() || it.username.contains(searchUserQuery, ignoreCase = true))
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(currentUser.username, color = StarlightWhite, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
-                IconButton(onClick = { showNewGroup = true }) { Icon(Icons.Outlined.Edit, contentDescription = "New Squad", tint = StarlightWhite) }
+                Text("Direct Messages", color = MutedLavender, fontSize = 12.5.sp)
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(bottom = 14.dp)) {
-                items(listOf("Your note", "K 🍷", "Amanraj", "Vishu")) { noteUser ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        RotatingNeonRingBox(sizeDp = 66, borderWidth = 2f) {
-                            Text(noteUser.first().toString(), color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(noteUser, color = MutedLavender, fontSize = 11.sp)
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
-                listOf("Primary", "Requests", "General").forEach { tab ->
-                    val active = selectedFilter == tab
-                    Box(
-                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(if (active) NeonPurple else GlassSurface).clickable { selectedFilter = tab }.padding(horizontal = 14.dp, vertical = 7.dp)
-                    ) { Text(tab, color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) }
+            OutlinedTextField(
+                value = searchUserQuery,
+                onValueChange = { searchUserQuery = it },
+                placeholder = { Text("Search users to chat...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MutedLavender) },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                shape = RoundedCornerShape(14.dp)
+            )
+        }
+
+        if (realContacts.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp).clip(RoundedCornerShape(18.dp)).background(GlassSurface).padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Abhi koi aur user online nahi hai. Jaise hi aapke dost PIVO par account banayenge, wo yahan live dikhenge!", color = MutedLavender, textAlign = TextAlign.Center, fontSize = 13.5.sp)
                 }
             }
         }
-        items(chats.filter { it.category == selectedFilter || selectedFilter == "Primary" }) { chat ->
+
+        items(realContacts, key = { it.uid }) { user ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(GlassSurface)
-                    .clickable {
-                        if (chat.hasUnopenedSnap) viewingSnapFrom = chat.name
-                        else activeChat = chat
-                    }
+                    .clickable { activePeer = user }
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(chat.name, color = StarlightWhite, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("🔥 ${chat.streakCount}", color = SnapYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    RotatingNeonRingBox(sizeDp = 48, borderWidth = 2f) {
+                        UniversalPhotoView(photoData = user.photoData, fallbackText = user.username, fontSizeSp = 18)
                     }
-                    Text(
-                        text = if (chat.hasUnopenedSnap) "🟥 Tap to view Snap • ${chat.time}" else chat.lastMsg,
-                        color = if (chat.hasUnopenedSnap) PlasmaPink else if (chat.isTyping) CyberCyan else MutedLavender,
-                        fontSize = 12.5.sp,
-                        fontWeight = if (chat.hasUnopenedSnap) FontWeight.Bold else FontWeight.Normal
-                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("@${user.username}", color = StarlightWhite, fontWeight = FontWeight.Bold)
+                            if (user.isVerified) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.Default.Verified, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                        Text("Tap to chat or send Snap", color = MutedLavender, fontSize = 12.sp)
+                    }
                 }
                 Row {
-                    IconButton(onClick = { onStartCall(chat.name, false) }) { Icon(Icons.Default.Call, contentDescription = null, tint = Color(0xFF4ADE80), modifier = Modifier.size(20.dp)) }
-                    IconButton(onClick = { onStartCall(chat.name, true) }) { Icon(Icons.Default.Videocam, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(22.dp)) }
+                    IconButton(onClick = { onStartCall(user.username, false) }) { Icon(Icons.Default.Call, contentDescription = null, tint = Color(0xFF4ADE80), modifier = Modifier.size(20.dp)) }
+                    IconButton(onClick = { onStartCall(user.username, true) }) { Icon(Icons.Default.Videocam, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(22.dp)) }
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FullProfileTabScreen(
-    accounts: List<UserProfileData>,
-    activeIndex: Int,
-    posts: List<PivoPost>,
-    onSwitchAccount: (Int) -> Unit,
-    onAddAccount: (UserProfileData) -> Unit,
+    profile: UserProfileData,
+    myPosts: List<LivePostItem>,
     onOpenEditProfile: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
-    val profile = accounts[activeIndex]
     var profileSubTab by remember { mutableIntStateOf(0) }
-    var showAccountSwitcher by remember { mutableStateOf(false) }
-
-    if (showAccountSwitcher) {
-        ModalBottomSheet(onDismissRequest = { showAccountSwitcher = false }, containerColor = DeepNebula) {
-            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text("Switch Account", color = StarlightWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Spacer(modifier = Modifier.height(14.dp))
-                accounts.forEachIndexed { index, acc ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onSwitchAccount(index); showAccountSwitcher = false }.padding(vertical = 10.dp, horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RotatingNeonRingBox(sizeDp = 46, borderWidth = 2f) {
-                                UserAvatarView(photoUrl = acc.photoUrl, fallbackText = acc.username, fontSizeSp = 18)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(acc.username, color = StarlightWhite, fontWeight = FontWeight.Bold)
-                                Text("👻 Snap Score: ${acc.snapScore}", color = SnapYellow, fontSize = 11.5.sp)
-                            }
-                        }
-                        if (index == activeIndex) Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CyberCyan)
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable {
-                        onAddAccount(UserProfileData(name = "New Creator", username = "pivo.creator${accounts.size + 1}", bio = "New PIVO Account ✨"))
-                        showAccountSwitcher = false
-                    }.padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(GlassSurface).border(1.dp, GlassBorder, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = StarlightWhite)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Add PIVO account", color = StarlightWhite, fontWeight = FontWeight.SemiBold)
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(modifier = Modifier.clickable { showAccountSwitcher = true }, verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(profile.username, color = StarlightWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, tint = StarlightWhite)
+                if (profile.isVerified) {
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Icon(Icons.Default.Verified, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(18.dp))
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(SnapYellow.copy(alpha = 0.2f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
@@ -1513,14 +2024,14 @@ fun FullProfileTabScreen(
             Box(modifier = Modifier.clickable { onOpenEditProfile() }) {
                 RotatingNeonRingBox(sizeDp = 92, borderWidth = 3f) {
                     Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(HyperViolet, NeonPurple, PlasmaPink))), contentAlignment = Alignment.Center) {
-                        UserAvatarView(photoUrl = profile.photoUrl, fallbackText = profile.name, fontSizeSp = 34)
+                        UniversalPhotoView(photoData = profile.photoData, fallbackText = profile.name, fontSizeSp = 34)
                     }
                 }
             }
             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
-                StatColumn("${posts.size}", "posts")
-                StatColumn("19", "followers")
-                StatColumn("13", "following")
+                StatColumn("${myPosts.size}", "posts")
+                StatColumn("${profile.followers.size}", "followers")
+                StatColumn("${profile.following.size}", "following")
             }
         }
 
@@ -1533,8 +2044,10 @@ fun FullProfileTabScreen(
                 }
             }
             if (profile.category.isNotBlank()) Text(profile.category, color = MutedLavender, fontSize = 12.5.sp)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(profile.bio, color = StarlightWhite, fontSize = 13.5.sp, lineHeight = 18.sp)
+            if (profile.bio.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(profile.bio, color = StarlightWhite, fontSize = 13.5.sp, lineHeight = 18.sp)
+            }
             if (profile.website.isNotBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text("🔗 ${profile.website}", color = CyberCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -1558,17 +2071,30 @@ fun FullProfileTabScreen(
             }
         }
 
-        val rows = posts.chunked(3)
-        rows.forEach { rowPosts ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                rowPosts.forEach { post ->
-                    Box(modifier = Modifier.weight(1f).aspectRatio(0.85f).background(Brush.linearGradient(post.cardGradient)).padding(8.dp), contentAlignment = Alignment.BottomStart) {
-                        Text(post.caption, color = Color.White, fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                repeat(3 - rowPosts.size) { Spacer(modifier = Modifier.weight(1f)) }
+        if (myPosts.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                Text("No posts yet. Share your first moment from Home!", color = MutedLavender, fontSize = 13.sp)
             }
-            Spacer(modifier = Modifier.height(2.dp))
+        } else {
+            val rows = myPosts.chunked(3)
+            rows.forEach { rowPosts ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    rowPosts.forEach { post ->
+                        Box(
+                            modifier = Modifier.weight(1f).aspectRatio(0.85f).background(Brush.linearGradient(listOf(Color(0xFF3C096C), Color(0xFFFF2A85)))),
+                            contentAlignment = Alignment.BottomStart
+                        ) {
+                            if (post.imageData.isNotBlank()) {
+                                UniversalPhotoView(photoData = post.imageData, fallbackText = profile.username)
+                            } else {
+                                Text(post.caption, color = Color.White, fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(8.dp))
+                            }
+                        }
+                    }
+                    repeat(3 - rowPosts.size) { Spacer(modifier = Modifier.weight(1f)) }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+            }
         }
     }
 }
@@ -1588,7 +2114,7 @@ fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) ->
 
     var name by remember { mutableStateOf(profile.name) }
     var username by remember { mutableStateOf(profile.username) }
-    var photoUrl by remember { mutableStateOf(profile.photoUrl) }
+    var photoData by remember { mutableStateOf(profile.photoData) }
     var isUploadingDp by remember { mutableStateOf(false) }
     var pronouns by remember { mutableStateOf(profile.pronouns) }
     var bio by remember { mutableStateOf(profile.bio) }
@@ -1603,13 +2129,27 @@ fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) ->
         if (uri != null) {
             isUploadingDp = true
             scope.launch {
-                val uploadedUrl = uploadDpToCloudinary(context, uri)
+                val permanentData = processAndUploadImagePermanent(context, uri, maxDimension = 360, quality = 75)
                 isUploadingDp = false
-                if (uploadedUrl != null) {
-                    photoUrl = uploadedUrl
-                    Toast.makeText(context, "DP updated! Done par tap karein ✅", Toast.LENGTH_SHORT).show()
+                if (permanentData != null) {
+                    photoData = permanentData
+                    // चुनते ही तुरंत Firestore में सेव भी कर दे ताकि कभी न हटे!
+                    onSave(
+                        profile.copy(
+                            name = name,
+                            username = username,
+                            photoData = permanentData,
+                            pronouns = pronouns,
+                            bio = bio,
+                            website = website,
+                            category = category,
+                            gender = gender,
+                            isAiProfile = isAi
+                        )
+                    )
+                    Toast.makeText(context, "DP permanently saved! ✅", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(context, "DP upload fail hua, dubara try karein", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Photo load fail hui, dubara try karein", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -1628,7 +2168,7 @@ fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) ->
                         profile.copy(
                             name = name,
                             username = username,
-                            photoUrl = photoUrl,
+                            photoData = photoData,
                             pronouns = pronouns,
                             bio = bio,
                             website = website,
@@ -1656,13 +2196,13 @@ fun FullEditProfileScreen(profile: UserProfileData, onSave: (UserProfileData) ->
                     if (isUploadingDp) {
                         CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp))
                     } else {
-                        UserAvatarView(photoUrl = photoUrl, fallbackText = name, fontSizeSp = 36)
+                        UniversalPhotoView(photoData = photoData, fallbackText = name, fontSizeSp = 36)
                     }
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isUploadingDp) "Uploading DP..." else "Change profile photo (DP) 📸",
+                text = if (isUploadingDp) "Saving DP permanently..." else "Change profile photo (DP) 📸",
                 color = CyberCyan,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.5.sp
@@ -1730,7 +2270,7 @@ fun FullSettingsAndActivityScreen(profile: UserProfileData, onTogglePrivacy: (Bo
             val url = "https://wa.me/917464963392?text=Hi%20PIVO%20Support%2C%20mujhe%20help%20chahiye"
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
-        SettingsRowItem(Icons.Outlined.Info, "About PIVO", "v1.0 Beta • Made in India") {}
+        SettingsRowItem(Icons.Outlined.Info, "About PIVO", "v1.0 Production • Made in India") {}
 
         Spacer(modifier = Modifier.height(20.dp))
         TextButton(onClick = onLogout) { Text("Log out ${profile.username}", color = PlasmaPink, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
@@ -1761,7 +2301,7 @@ fun SettingsRowItem(icon: ImageVector, title: String, trailingText: String = "",
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ReelsTabScreen(reels: List<PivoReelItem>, onAddReelLink: (String, String) -> Unit) {
-    val pagerState = rememberPagerState(pageCount = { reels.size })
+    val pagerState = rememberPagerState(pageCount = { maxOf(reels.size, 1) })
     var showLinkDialog by remember { mutableStateOf(false) }
 
     if (showLinkDialog) {
@@ -1769,7 +2309,7 @@ fun ReelsTabScreen(reels: List<PivoReelItem>, onAddReelLink: (String, String) ->
         var cap by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showLinkDialog = false }, containerColor = DeepNebula,
-            title = { Text("Paste Instagram Reel Link 🎬", color = StarlightWhite) },
+            title = { Text("Paste Reel Link 🎬", color = StarlightWhite) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = link, onValueChange = { link = it }, placeholder = { Text("https://www.instagram.com/reel/...") })
@@ -1781,21 +2321,32 @@ fun ReelsTabScreen(reels: List<PivoReelItem>, onAddReelLink: (String, String) ->
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-            val reel = reels[page]
-            Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(reel.bgGradient)), contentAlignment = Alignment.Center) {
-                if (reel.embedUrl != null) {
-                    AndroidView(factory = { ctx ->
-                        WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.cacheMode = WebSettings.LOAD_DEFAULT
-                            webViewClient = WebViewClient()
-                            loadUrl(reel.embedUrl)
-                        }
-                    }, modifier = Modifier.fillMaxSize())
-                } else {
-                    Text(reel.caption, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
+        if (reels.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.PlayCircleOutline, contentDescription = null, tint = PlasmaPink, modifier = Modifier.size(56.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("PIVO Reels", color = StarlightWhite, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                    Text("Upar '+ Paste Link' par tap karke koi bhi Reel link dalein aur full-screen scroll karein!", color = MutedLavender, textAlign = TextAlign.Center, fontSize = 13.sp)
+                }
+            }
+        } else {
+            VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                val reel = reels[page]
+                Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(reel.bgGradient)), contentAlignment = Alignment.Center) {
+                    if (reel.embedUrl != null) {
+                        AndroidView(factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.cacheMode = WebSettings.LOAD_DEFAULT
+                                webViewClient = WebViewClient()
+                                loadUrl(reel.embedUrl)
+                            }
+                        }, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Text(reel.caption, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
+                    }
                 }
             }
         }
